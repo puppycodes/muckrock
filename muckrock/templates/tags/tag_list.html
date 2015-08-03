@@ -5,7 +5,7 @@
 {% block content %}
 <div class="master-detail">
     <section class="master">
-        <h1>Tags</h1>
+        <h1>{{ tags|length }} Tag{{ tags|length|pluralize }}</h1>
         <div id="tags">
             <input class="search" type="search" placeholder="Filter tags" />
             <div class="tag-table">
@@ -47,6 +47,14 @@
         <table>
             {% for article in tagged_articles %}
             <tr><td><a href="{{ article.get_absolute_url }}">{{ article.title }}</a></td></tr>
+            {% endfor %}
+        </table>
+        {% endif %}
+        {% if tagged_questions %}
+        <h2>{{ tagged_questions|length }} Question{{ tagged_questions|length|pluralize }}</h2>
+        <table>
+            {% for question in tagged_questions %}
+            <tr><td><a href="{{ question.get_absolute_url }}">{{ question.title }}</a></td></tr>
             {% endfor %}
         </table>
         {% endif %}
