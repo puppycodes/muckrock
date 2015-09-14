@@ -3,16 +3,38 @@ Models for the Task application
 """
 
 from django.contrib.auth.models import User
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.db.models import Q
 
 from datetime import datetime
+import email
 
 import logging
 
 from muckrock.foia.models import FOIARequest, STATUS
 from muckrock.agency.models import Agency
 from muckrock.jurisdiction.models import Jurisdiction
+
+
+class TaskQuerySet(models.QuerySet):
+    """Object manager for all tasks"""
+    def get_unresolved(self):
+        """Get all unresolved tasks"""
+        return self.filter(resolved=False)
+
+    def get_resolved(self):
+        """Get all resolved tasks"""
+        return self.filter(resolved=True)
+
+
+class OrphanTaskQuerySet(models.QuerySet):
+    """Object manager for orphan tasks"""
+    def get_from_sender(self, sender):
+        """Get all orphan tasks from a specific sender"""
+        return self.filter(communication__priv_from_who__icontains=sender)
+
 
 class Task(models.Model):
     """A base task model for fields common to all tasks"""
@@ -21,6 +43,8 @@ class Task(models.Model):
     resolved = models.BooleanField(default=False)
     assigned = models.ForeignKey(User, blank=True, null=True, related_name="assigned_tasks")
     resolved_by = models.ForeignKey(User, blank=True, null=True, related_name="resolved_tasks")
+
+    objects = TaskQuerySet.as_manager()
 
     class Meta:
         ordering = ['date_created']
@@ -34,11 +58,7 @@ class Task(models.Model):
         self.resolved_by = user
         self.date_done = datetime.now()
         self.save()
-
-    def assign(self, user):
-        """Assign the task"""
-        self.assigned = user
-        self.save()
+        logging.info('User %s resolved task %s', user, self.pk)
 
 
 class GenericTask(Task):
@@ -61,6 +81,7 @@ class OrphanTask(Task):
     communication = models.ForeignKey('foia.FOIACommunication')
     address = models.CharField(max_length=255)
 
+    objects = OrphanTaskQuerySet.as_manager()
     template_name = 'task/orphan.html'
 
     def __unicode__(self):
@@ -70,12 +91,34 @@ class OrphanTask(Task):
         """Moves the comm and creates a ResponseTask for it"""
         moved_comms = self.communication.move(foia_pks)
         for moved_comm in moved_comms:
-            ResponseTask.objects.create(communication=moved_comm)
+            ResponseTask.objects.create(
+                communication=moved_comm,
+                created_from_orphan=True
+            )
+            moved_comm.make_sender_primary_contact()
         return
 
-    def reject(self):
-        """Simply resolves the request. Should do something to spam addresses."""
-        # pylint: disable=no-self-use
+    def reject(self, blacklist=False):
+        """If blacklist is true, should blacklist the sender's domain."""
+        if blacklist:
+            self.blacklist()
+        return
+
+    def get_sender_domain(self):
+        """Gets the domain of the sender's email address."""
+        _, email_address = email.utils.parseaddr(self.communication.priv_from_who)
+        if '@' not in email_address:
+            return None
+        else:
+            return email_address.split('@')[1]
+
+    def blacklist(self):
+        """Adds the communication's sender's domain to the email blacklist."""
+        domain = self.get_sender_domain()
+        if domain is None:
+            return
+        blacklist, _ = BlacklistDomain.objects.get_or_create(domain=domain)
+        blacklist.resolve_matches()
         return
 
 
@@ -93,13 +136,11 @@ class SnailMailTask(Task):
     def set_status(self, status):
         """Set the status of the comm and FOIA affiliated with this task"""
         comm = self.communication
-        foia = comm.foia
-        foia.status = status
-        foia.update()
-        foia.save()
-        comm.status = foia.status
-        #comm.date = datetime.now()
+        comm.status = status
         comm.save()
+        comm.foia.status = status
+        comm.foia.save()
+        comm.foia.update()
 
     def update_date(self):
         """Sets the date of the communication to today"""
@@ -199,6 +240,7 @@ class ResponseTask(Task):
     """A response has been received and needs its status set"""
     # pylint: disable=no-member
     communication = models.ForeignKey('foia.FOIACommunication')
+    created_from_orphan = models.BooleanField(default=False)
 
     def __unicode__(self):
         return u'Response: %s' % (self.communication.foia)
@@ -226,8 +268,6 @@ class ResponseTask(Task):
             raise ValueError('Invalid status.')
         # save comm first
         comm.status = status
-        #if status in ['ack', 'processed', 'appealing']:
-        #    comm.date = datetime.now()
         comm.save()
         # save foia next
         foia = comm.foia
@@ -237,6 +277,16 @@ class ResponseTask(Task):
         foia.update()
         foia.save()
         logging.info('Request #%d status changed to "%s"', foia.id, status)
+
+    def set_price(self, price):
+        """Sets the price of the communication's request"""
+        price = float(price)
+        comm = self.communication
+        if not comm.foia:
+            raise ValueError('This tasks\'s communication is an orphan.')
+        foia = comm.foia
+        foia.price = price
+        foia.save()
 
 
 class FailedFaxTask(Task):
@@ -277,6 +327,16 @@ class CrowdfundTask(Task):
         return u'Crowdfund: %s' % self.crowdfund
 
 
+class GenericCrowdfundTask(Task):
+    """Created when a crowdfund is finished"""
+    content_type = models.ForeignKey(ContentType)
+    object_id = models.PositiveIntegerField()
+    crowdfund = GenericForeignKey('content_type', 'object_id')
+
+    def __unicode__(self):
+        return u'Crowdfund: %s' % self.crowdfund
+
+
 class MultiRequestTask(Task):
     """Created when a multirequest is created and needs approval."""
     multirequest = models.ForeignKey('foia.FOIAMultiRequest')
@@ -285,10 +345,17 @@ class MultiRequestTask(Task):
         return u'Multi-Request: %s' % self.multirequest
 
 
-# Not a task, but use by tasks
+# Not a task, but used by tasks
 class BlacklistDomain(models.Model):
     """A domain to be blacklisted from sending us emails"""
     domain = models.CharField(max_length=255)
 
     def __unicode__(self):
         return self.domain
+
+    def resolve_matches(self):
+        """Resolves any orphan tasks that match this blacklisted domain."""
+        tasks_to_resolve = OrphanTask.objects.get_from_sender(self.domain)
+        for task in tasks_to_resolve:
+            task.resolve()
+        return

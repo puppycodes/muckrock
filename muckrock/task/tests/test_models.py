@@ -54,11 +54,6 @@ class TaskTests(TestCase):
         eq_(self.task.resolved_by, user,
             'The resolving user should be recorded by the task.')
 
-    def test_assign(self):
-        user = User.objects.get(pk=1)
-        self.task.assign(user)
-        ok_(self.task.assigned is user,
-            'Should assign the task to the specified user')
 
 class OrphanTaskTests(TestCase):
     """Test the OrphanTask class"""
@@ -69,7 +64,8 @@ class OrphanTaskTests(TestCase):
     def setUp(self):
         self.comm = FOIACommunication.objects.create(
                 date=datetime.now(),
-                from_who='God',
+                from_who='Michael Morisy',
+                priv_from_who='Michael Morisy <michael@muckrock.com>',
                 full_html=False,
                 opened=False,
                 response=True)
@@ -89,23 +85,42 @@ class OrphanTaskTests(TestCase):
         eq_(task.models.ResponseTask.objects.count(), count_response_tasks + 3,
             'Reponse tasks should be created for each communication moved.')
 
+    def test_get_sender_domain(self):
+        """Should return the domain of the orphan's sender."""
+        eq_(self.task.get_sender_domain(), 'muckrock.com')
+
     def test_reject(self):
         """Shouldn't do anything, ATM. Revisit later."""
         self.task.reject()
 
     def test_blacklist(self):
-        """A blacklisted email should be automatically resolved"""
-        # pylint: disable=no-self-use
-        task.models.BlacklistDomain.objects.create(domain='spam.com')
-        comm = FOIACommunication.objects.create(
-                date=datetime.now(),
-                from_who='spammer',
-                priv_from_who='evil@spam.com')
-        orphan = task.models.OrphanTask.objects.create(
+        """A blacklisted orphan should add its sender's domain to the blacklist"""
+        self.task.blacklist()
+        ok_(task.models.BlacklistDomain.objects.filter(domain='muckrock.com'))
+
+    def test_resolve_after_blacklisting(self):
+        """After blacklisting, other orphan tasks from the sender should be resolved."""
+        other_task = task.models.OrphanTask.objects.create(
             reason='ib',
-            communication=comm,
+            communication=self.comm,
+            address='Whatever Who Cares')
+        self.task.blacklist()
+        updated_task_1 = task.models.OrphanTask.objects.get(pk=self.task.pk)
+        updated_task_2 = task.models.OrphanTask.objects.get(pk=other_task.pk)
+        ok_(updated_task_1.resolved and updated_task_2.resolved)
+
+    def test_create_blacklist_sender(self):
+        """An orphan created from a blacklisted sender should be automatically resolved."""
+        self.task.blacklist()
+        new_orphan = task.models.OrphanTask.objects.create(
+            reason='ib',
+            communication=self.comm,
             address='orphan-address')
-        nose.tools.ok_(orphan.resolved)
+        updated_task_1 = task.models.OrphanTask.objects.get(pk=self.task.pk)
+        updated_task_2 = task.models.OrphanTask.objects.get(pk=new_orphan.pk)
+        eq_(updated_task_1.resolved, True)
+        eq_(updated_task_2.resolved, True)
+
 
 class SnailMailTaskTests(TestCase):
     """Test the SnailMailTask class"""
@@ -231,6 +246,12 @@ class ResponseTaskTests(TestCase):
         eq_(self.task.communication.foia.tracking_id, new_tracking,
             'Should update the tracking number on the request.')
 
+    def test_set_price(self):
+        price = 1.23
+        self.task.set_price(price)
+        eq_(self.task.communication.foia.price, price,
+            'Should update the price on the request.')
+
     def test_move(self):
         move_to = 2
         self.task.move(2)
@@ -251,3 +272,10 @@ class ResponseTaskTests(TestCase):
     def test_bad_move(self):
         """Should raise a 404 if non-existant move destination."""
         self.task.move(111111)
+
+    @raises(ValueError)
+    def test_bad_price(self):
+        """Should raise an error if not given a value convertable to a float"""
+        self.task.set_price(1)
+        self.task.set_price('1')
+        self.task.set_price('foo')

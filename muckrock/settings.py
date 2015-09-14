@@ -247,7 +247,8 @@ INSTALLED_APPS = (
     'muckrock.sidebar',
     'muckrock.task',
     'muckrock.organization',
-    'muckrock.project'
+    'muckrock.project',
+    'muckrock.mailgun',
 )
 if DEBUG:
     INSTALLED_APPS += ('django_nose',)
@@ -310,8 +311,7 @@ ABSOLUTE_URL_OVERRIDES = {
 DBSETTINGS_USE_SITES = False
 
 if DEBUG:
-    pass
-    #TEST_RUNNER = 'django_nose.NoseTestSuiteRunner'
+    TEST_RUNNER = 'django_nose.NoseTestSuiteRunner'
 
 TINYMCE_DEFAULT_CONFIG = {
     'theme': 'advanced',

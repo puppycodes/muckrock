@@ -15,6 +15,7 @@ import json
 import logging
 import os.path
 import re
+import sys
 import urllib2
 from boto.s3.connection import S3Connection
 from datetime import date, datetime, timedelta
@@ -182,17 +183,12 @@ def submit_multi_request(req_pk, **kwargs):
 @periodic_task(run_every=crontab(hour=5, minute=0), name='muckrock.foia.tasks.followup_requests')
 def followup_requests():
     """Follow up on any requests that need following up on"""
-    # change to this after all follows up have been resolved
-    #for foia in FOIARequest.objects.get_followup():
     log = []
     error_log = []
     # weekday returns 5 for sat and 6 for sun
     is_weekday = datetime.today().weekday() < 5
     if options.enable_followup and (options.enable_weekend_followup or is_weekday):
-        foia_requests = FOIARequest.objects.filter(status__in=['ack', 'processed'],
-                                                   date_followup__lte=date.today(),
-                                                   disable_autofollowups=False)
-        for foia in foia_requests:
+        for foia in FOIARequest.objects.get_followup():
             try:
                 foia.followup()
                 log.append('%s - %d - %s' % (foia.status, foia.pk, foia.title))
@@ -245,15 +241,19 @@ def retry_stuck_documents():
 class SizeError(Exception):
     """Uploaded file is not the correct size"""
 
-# pylint: disable=broad-except
 @periodic_task(run_every=crontab(hour=2, minute=0), name='muckrock.foia.tasks.autoimport')
 def autoimport():
     """Auto import documents from S3"""
+    # pylint: disable=broad-except
     # pylint: disable=too-many-locals
     # pylint: disable=too-many-branches
-    p_name = re.compile(r'(?P<month>\d\d?)-(?P<day>\d\d?)-(?P<year>\d\d) '
-                        r'(?P<docs>(?:mr\d+ )+)(?P<code>[a-z-]+)(?:\$(?P<arg>\S+))?'
-                        r'(?: ID#(?P<id>\S+))?', re.I)
+    # pylint: disable=too-many-statements
+    p_name = re.compile(
+            r'(?P<month>\d\d?)-(?P<day>\d\d?)-(?P<year>\d\d) '
+            r'(?P<docs>(?:mr\d+ )+)(?P<code>[a-z-]+)(?:\$(?P<arg>\S+))?'
+            r'(?: ID#(?P<id>\S+))?'
+            r'(?: EST(?P<estm>\d\d?)-(?P<estd>\d\d?)-(?P<esty>\d\d))?'
+            , re.I)
     log = ['Start Time: %s' % datetime.now()]
 
     def s3_copy(bucket, key_or_pre, dest_name):
@@ -302,8 +302,15 @@ def autoimport():
         title, status, body = CODES[code]
         arg = m_name.group('arg')
         id_ = m_name.group('id')
+        if m_name.group('esty'):
+            est_date = date(int(m_name.group('esty')) + 2000,
+                            int(m_name.group('estm')),
+                            int(m_name.group('estd')))
+        else:
+            est_date = None
 
-        return foia_pks, file_date, code, title, status, body, arg, id_
+        return (foia_pks, file_date, code, title,
+                status, body, arg, id_, est_date)
 
     def import_key(key, comm, log, title=None):
         """Import a key"""
@@ -354,7 +361,8 @@ def autoimport():
         file_name = key.name[6:]
 
         try:
-            foia_pks, file_date, code, title, status, body, arg, id_ = parse_name(file_name)
+            foia_pks, file_date, code, title, status, body, arg, id_, est_date \
+                = parse_name(file_name)
         except ValueError as exc:
             s3_copy(bucket, key, 'review/%s' % file_name)
             s3_delete(bucket, key)
@@ -380,6 +388,8 @@ def autoimport():
                     foia.price = Decimal(arg)
                 if id_:
                     foia.tracking_id = id_
+                if est_date:
+                    foia.date_estimate = est_date
 
                 if key.name.endswith('/'):
                     import_prefix(key, bucket, comm, log)
@@ -396,6 +406,7 @@ def autoimport():
             except Exception as exc:
                 s3_copy(bucket, key, 'review/%s' % file_name)
                 log.append('ERROR: %s has caused an unknown error. %s' % (file_name, exc))
+                logger.error('Autoimport error: %s', exc, exc_info=sys.exc_info())
         # delete key after processing all requests for it
         s3_delete(bucket, key)
     log.append('End Time: %s' % datetime.now())
