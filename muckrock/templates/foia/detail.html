@@ -101,14 +101,14 @@
                     <header>
                         <dfn>Status</dfn>
                         {% if foia.status != 'started' and foia.status != 'submitted' %}
-                        {% if foia.user == user or user.is_staff %}
+                        {% if user_can_edit %}
                         <div class="edit" id="edit-status" data-manager=".status-manager">Edit</div>
                         {% endif %}
                         {% endif %}
                     </header>
                     <p class="status state {{ foia.color_code }}">{{foia.get_status_display}}</p>
                     {% if foia.status != 'started' and foia.status != 'submitted' %}
-                    {% if foia.user == user or user.is_staff %}
+                    {% if user_can_edit %}
                     <form method="post" class="status-form" id="status-form">
                         {% csrf_token %}
                         <select name="status">
@@ -122,11 +122,12 @@
                     {% endif %}
                     {% endif %}
                 </section>
-                {% if user_can_edit %}
                 <section class="embargo manager">
                     <header>
                         <dfn>Embargo</dfn>
+                        {% if user_can_edit and user.profile.can_embargo %}
                         <div class="edit" id="edit-embargo" data-manager=".embargo-manager">Edit</div>
+                        {% endif %}
                     </header>
                     <div class="embargo state">
                     {% if foia.embargo %}
@@ -139,6 +140,7 @@
                         <p>This request has no embargo.</p>
                     {% endif %}
                     </div>
+                    {% if user_can_edit and user.profile.can_embargo %}
                     <form method="post" action="embargo/" class="embargo-form" id="embargo-form">
                         {% csrf_token %}
                         {{ embargo_form.errors }}
@@ -167,6 +169,7 @@
                         {% endif %}
                         <button class="cancel" id="cancel-embargo">Cancel</button>
                     </form>
+                    {% endif %}
                 </section>
                 {% endif %}
                 {% tag_manager foia %}
@@ -184,7 +187,7 @@
         {% endif %}
 
         <ul class="tabs">
-            <li class="tab active" data-target="#request">Request</li>
+            <li class="tab active" data-target="#comms">Request</li>
             <li class="tab" data-target="#files">Files</li>
             {% if foia.user == user or user.is_staff %}
             <li class="tab" data-target="#notes">Notes</li>
@@ -197,7 +200,7 @@
             {% endif %}
         </ul>
 
-        <section class="tab-section communications visible" id="request">
+        <section class="tab-section communications visible" id="comms">
             <div class="communications-controls">
                 <div class="communications filter">
                     <input id="comms-filter" type="search" placeholder="Filter communications" />
@@ -278,7 +281,9 @@
             <div class="active-document">
                 <header>
                     <h3 id="doc-title"></h3>
-                    <a href="#all-files">All Files</a>
+                    <div class="file-viewer-actions">
+                        <span class="cancel button">Close</span>
+                    </div>
                 </header>
                 <div class="viewer" id="viewer"></div>
             </div>
@@ -298,12 +303,16 @@
         {% if user_can_edit %}
         <!-- NOTES -->
         <section class="tab-section notes" id="notes">
+            {% if foia.notes.count > 0 %}
             <header class="notes-controls">
                 <div class="notes filter">
                     <input id="notes-filter" type="search" placeholder="Filter notes" />
                 </div>
-                <button class="primary" id="add-note">Add a Note</button>
             </header>
+            {% endif %}
+            {% for note in foia.notes.all %}
+                {% include 'foia/note.html' with note=note %}
+            {% endfor %}
             <form class="add-note" method="post">
                 {% csrf_token %}
                 <header>
@@ -313,18 +322,13 @@
                 {{ note_form.note }}
                 <footer>
                     <button class="primary" type="submit" name="action" value="add_note">Save</button>
-                    <span class="cancel button">Cancel</span>
+                    <p>Your notes are only visible to you{% if request.user.profile.can_embargo %} and other editors of this request{% endif %}.</p>
                 </footer>
             </form>
-            {% for note in foia.notes.all %}
-                {% include 'foia/note.html' with note=note %}
-            {% empty %}
-                <h3 class="empty">There are no notes attached to this request.</h3>
-            {% endfor %}
         </section>
         {% endif %}
 
-        {% if user_can_edit %}
+        {% if user_can_edit and request.user.profile.can_embargo %}
         <!-- ACCESS -->
         <section class="tab-section access" id="sharing">
             {% if foia.embargo %}

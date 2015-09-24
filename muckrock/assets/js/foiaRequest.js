@@ -85,6 +85,7 @@ $('.tab').click(function() {
 var target = window.location.hash;
 var n = target.indexOf('-');
 target = target.substring(0, n != -1 ? n : target.length);
+target += 's';
 $('.tab').each(function(index, element){
     var tabTarget = $(this).data('target');
     if (target == tabTarget) {
@@ -92,9 +93,13 @@ $('.tab').each(function(index, element){
     }
 });
 // deep link to single file
-if (target == '#file') {
+if (target == '#files') {
     var specificFile = window.location.hash;
     $(specificFile + ' .view-file').click();
+} else if (target == '#notes' || target == '#comms' || target == '#tasks') { // deep link to specific element
+    var specificElement = window.location.hash;
+    var elementOffset = $(specificElement).offset();
+    window.scrollTo(elementOffset.top, elementOffset.left);
 }
 
 /* Communications */
@@ -185,6 +190,12 @@ $('a.view-file').click(function() {
     displayDoc(docId, docTitle, docAnchor);
 });
 
+$('.active-document .cancel.button').click(function(){
+    $('#viewer').empty();
+    $('.active-document').removeClass('visible');
+    $('.files-list .active').removeClass('active');
+});
+
 $('.toggle-embed').click(function(){
     var file = $(this).closest('.file');
     var embed = $(file).find('.file-embed');
@@ -197,13 +208,12 @@ $('.toggle-embed').click(function(){
 
 /* Notes */
 
-$('#add-note').click(function(e){
-    e.preventDefault();
-    var noteForm = $('form.add-note');
-    $(noteForm).addClass('visible');
-    $(noteForm).find('.cancel.button').click(function(){
-        $(noteForm).removeClass('visible');
-    });
+$('.note-header').click(function(){
+    $(this).parent().toggleClass('collapsed');
+});
+
+$('.note-date').click(function(){
+    return false;
 });
 
 /* Sharing */
