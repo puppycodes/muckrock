@@ -10,6 +10,7 @@ from django.http import HttpResponseRedirect
 from django.shortcuts import render_to_response, get_object_or_404, redirect
 from django.template import RequestContext
 
+import actstream
 from collections import namedtuple
 from datetime import datetime, timedelta
 import logging
@@ -20,10 +21,9 @@ from muckrock.crowdfund.forms import CrowdfundRequestForm
 from muckrock.foia.forms import \
     FOIADeleteForm, \
     FOIAAdminFixForm, \
-    FOIANoteForm, \
     FOIAEmbargoForm, \
     FOIAFileFormSet
-from muckrock.foia.models import FOIARequest, FOIAFile
+from muckrock.foia.models import FOIARequest, FOIAFile, END_STATUS
 from muckrock.foia.views.comms import save_foia_comm
 from muckrock.jurisdiction.models import Jurisdiction
 from muckrock.settings import STRIPE_SECRET_KEY
@@ -86,32 +86,6 @@ def _foia_action(request, foia, action):
         context_instance=RequestContext(request)
     )
 
-# User Actions
-
-@login_required
-def note(request, jurisdiction, jidx, slug, idx):
-    """Add a note to a request"""
-    def form_actions(_, foia, form):
-        """Helper class, passed to generic function"""
-        foia_note = form.save(commit=False)
-        foia_note.foia = foia
-        foia_note.date = datetime.now()
-        foia_note.save()
-    foia = _get_foia(jurisdiction, jidx, slug, idx)
-    action = RequestAction(
-        form_actions=form_actions,
-        msg='add notes',
-        tests=[],
-        form_class=lambda r, f: FOIANoteForm,
-        return_url=lambda r, f: f.get_absolute_url() + '#tabs-notes',
-        heading='Add Note',
-        value='Add',
-        must_own=True,
-        template=action_template,
-        extra_context=lambda f: {}
-    )
-    return _foia_action(request, foia, action)
-
 @login_required
 def delete(request, jurisdiction, jidx, slug, idx):
     """Delete a non-submitted FOIA Request"""
@@ -138,68 +112,77 @@ def delete(request, jurisdiction, jidx, slug, idx):
     return _foia_action(request, foia, action)
 
 @login_required
-def permanent_embargo(request, jurisdiction, jidx, slug, idx):
-    """Toggle the permanant embargo on the FOIA Request"""
-    foia = _get_foia(jurisdiction, jidx, slug, idx)
-    is_org_member = request.user == foia.user and request.user.profile.organization != None
-    if foia.editable_by(request.user) and is_org_member or request.user.is_staff:
-        if foia.embargo == True:
-            if foia.is_permanently_embargoed():
-                foia.permanent_embargo = False
-                msg = 'The permanent embargo on this request has been lifted.'
-            else:
-                foia.permanent_embargo = True
-                msg = 'The request is now permanently embargoed.'
-            messages.success(request, msg)
-            foia.save()
-        else:
-            messages.error(request, 'You may only permanently embargo requests that '
-                                    'already have an embargo.')
-    else:
-        messages.error(request, 'Only staff and org members may permanently embargo '
-                                'their requests.')
-    return redirect(foia)
-
-@login_required
 def embargo(request, jurisdiction, jidx, slug, idx):
     """Change the embargo on a request"""
-    def form_actions(_, foia, form):
-        """Update the embargo date"""
-        foia.embargo = True
-        foia.date_embargo = form.cleaned_data.get('date_embargo')
-        foia.permanent_embargo = False
+
+    def fine_tune_embargo(request, foia):
+        """Adds an expiration date or makes permanent if necessary."""
+        permanent = request.POST.get('permanent_embargo')
+        expiration = request.POST.get('date_embargo')
+        form = FOIAEmbargoForm({
+            'permanent_embargo': request.POST.get('permanent_embargo'),
+            'date_embargo': request.POST.get('date_embargo')
+        })
+        if form.is_valid():
+            permanent = form.cleaned_data['permanent_embargo']
+            expiration = form.cleaned_data['date_embargo']
+            if request.user.profile.can_embargo_permanently():
+                foia.permanent_embargo = permanent
+            if expiration and foia.status in END_STATUS:
+                foia.date_embargo = expiration
+            foia.save()
+        return
+
+    def create_embargo(request, foia):
+        """Apply an embargo to the FOIA"""
+        if request.user.profile.can_embargo():
+            foia.embargo = True
+            foia.save()
+            logger.info('%s embargoed %s', request.user, foia)
+            # generate action
+            actstream.action.send(
+                request.user,
+                verb='embargoed',
+                action_object=foia
+            )
+            fine_tune_embargo(request, foia)
+        else:
+            logger.error('%s was forbidden from embargoing %s', request.user, foia)
+            messages.error(request, 'You cannot embargo requests.')
+        return
+
+    def update_embargo(request, foia):
+        """Update an embargo to the FOIA"""
+        if request.user.profile.can_embargo():
+            fine_tune_embargo(request, foia)
+        else:
+            logger.error('%s was forbidden from updating the embargo on %s', request.user, foia)
+            messages.error(request, 'You cannot update this embargo.')
+        return
+
+    def delete_embargo(request, foia):
+        """Remove an embargo from the FOIA"""
+        foia.embargo = False
         foia.save()
-        logger.info(
-            'Embargo set by user for FOI Request %d %s to %s',
-            foia.pk,
-            foia.title,
-            foia.embargo
+        logger.info('%s unembargoed %s', request.user, foia)
+        # generate action
+        actstream.action.send(
+            request.user,
+            verb='unembargoed',
+            action_object=foia
         )
+        return
+
     foia = _get_foia(jurisdiction, jidx, slug, idx)
-    finished_status = ['rejected', 'no_docs', 'done', 'partial', 'abandoned']
-    if foia.embargo or foia.status not in finished_status:
-        foia.embargo = not foia.embargo
-        foia.permanent_embargo = False
-        foia.date_embargo = None
-        foia.save()
-        return redirect(foia)
-    else:
-        action = RequestAction(
-            form_actions=form_actions,
-            msg='embargo',
-            tests=[(
-                lambda f: f.user.profile.can_embargo(),
-                'You may not embargo requests with your account type'
-            )],
-            form_class=lambda r, f: FOIAEmbargoForm,
-            return_url=lambda r, f: f.get_absolute_url(),
-            heading='Update the Embargo Date',
-            value='Update',
-            must_own=True,
-            template='forms/foia/embargo.html',
-            extra_context=lambda f: {}
-        )
-        return _foia_action(request, foia, action)
+    if request.method == 'POST' and foia.editable_by(request.user):
+        embargo_action = request.POST.get('embargo')
+        if embargo_action == 'create':
+            create_embargo(request, foia)
+        elif embargo_action == 'update':
+            update_embargo(request, foia)
+        elif embargo_action == 'delete':
+            delete_embargo(request, foia)
+    return redirect(foia)
 
 @login_required
 def pay_request(request, jurisdiction, jidx, slug, idx):
@@ -227,6 +210,12 @@ def pay_request(request, jurisdiction, jidx, slug, idx):
             int(amount)/100,
             foia.title
         )
+        # generate action
+        actstream.action.send(
+            request.user,
+            verb='paid fees',
+            target=foia
+        )
         foia.status = 'processed'
         foia.save()
         PaymentTask.objects.create(
@@ -239,18 +228,15 @@ def pay_request(request, jurisdiction, jidx, slug, idx):
 def follow(request, jurisdiction, jidx, slug, idx):
     """Follow or unfollow a request"""
     foia = _get_foia(jurisdiction, jidx, slug, idx)
-    if foia.user != request.user:
-        followers = foia.followed_by
-        if followers.filter(user=request.user): # If following, unfollow
-            followers.remove(request.user.profile)
-            msg = 'You are no longer following %s' % foia.title
-        else: # If not following, follow
-            followers.add(request.user.profile)
-            msg = ('You are now following %s. '
-                   'We will notify you when it is updated.') % foia.title
-        messages.success(request, msg)
+    followers = actstream.models.followers(foia)
+    if foia.user == request.user:
+        messages.error(request, 'You automatically follow requests you own.')
+    elif request.user in followers:
+        actstream.actions.unfollow(request.user, foia)
+        messages.success(request, 'You are no longer following this request.')
     else:
-        messages.error(request, 'You may not follow your own request.')
+        actstream.actions.follow(request.user, foia, actor_only=False)
+        messages.success(request, 'You are now following this request.')
     return redirect(foia)
 
 @login_required
@@ -334,8 +320,13 @@ def crowdfund_request(request, idx, **kwargs):
         # save crowdfund object
         form = CrowdfundRequestForm(request.POST)
         if form.is_valid():
-            form.save()
+            crowdfund = form.save()
             messages.success(request, 'Your crowdfund has started, spread the word!')
+            actstream.action.send(
+                request.user,
+                verb='created',
+                action_object=crowdfund
+            )
             return redirect(foia)
 
     elif request.method == 'GET':

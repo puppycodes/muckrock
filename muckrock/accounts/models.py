@@ -3,28 +3,28 @@ Models for the accounts application
 """
 
 from django.contrib.auth.models import User
+from django.conf import settings
 from django.core.mail import EmailMessage
 from django.db import models
 from django.template.loader import render_to_string
 
+import actstream
+import datetime
 import dbsettings
-import string
-import stripe
-from datetime import datetime
 from easy_thumbnails.fields import ThumbnailerImageField
 from itertools import groupby
 from localflavor.us.models import PhoneNumberField, USStateField
-from random import choice
-from sesame.utils import get_parameters
+from lot.models import LOT
+import stripe
 from urllib import urlencode
 
+from muckrock import utils
 from muckrock.foia.models import FOIARequest
 from muckrock.jurisdiction.models import Jurisdiction
 from muckrock.organization.models import Organization
-from muckrock.settings import MONTHLY_REQUESTS, STRIPE_SECRET_KEY
 from muckrock.values import TextValue
 
-stripe.api_key = STRIPE_SECRET_KEY
+stripe.api_key = settings.STRIPE_SECRET_KEY
 
 class EmailOptions(dbsettings.Group):
     """DB settings for sending email"""
@@ -70,22 +70,11 @@ class Profile(models.Model):
     )
     zip_code = models.CharField(max_length=10, blank=True)
     phone = PhoneNumberField(blank=True)
-    follows_foia = models.ManyToManyField(
-        FOIARequest,
-        related_name='followed_by',
-        blank=True
-    )
-    follows_question = models.ManyToManyField(
-        'qanda.Question',
-        related_name='followed_by',
-        blank=True
-    )
     notifications = models.ManyToManyField(
         FOIARequest,
         related_name='notify',
         blank=True
     )
-    follow_questions = models.BooleanField(default=False)
     acct_type = models.CharField(max_length=10, choices=ACCT_TYPES)
     organization = models.ForeignKey(
         Organization,
@@ -158,12 +147,12 @@ class Profile(models.Model):
 
     def get_monthly_requests(self):
         """Get the number of requests left for this month"""
-        not_this_month = self.date_update.month != datetime.now().month
-        not_this_year = self.date_update.year != datetime.now().year
+        not_this_month = self.date_update.month != datetime.datetime.now().month
+        not_this_year = self.date_update.year != datetime.datetime.now().year
         # update requests if they have not yet been updated this month
         if not_this_month or not_this_year:
-            self.date_update = datetime.now()
-            self.monthly_requests = MONTHLY_REQUESTS.get(self.acct_type, 0)
+            self.date_update = datetime.datetime.now()
+            self.monthly_requests = settings.MONTHLY_REQUESTS.get(self.acct_type, 0)
             self.save()
         return self.monthly_requests
 
@@ -225,6 +214,10 @@ class Profile(models.Model):
         """Is this user allowed to embargo?"""
         return self.acct_type in ['admin', 'beta', 'pro', 'proxy'] or self.organization != None
 
+    def can_embargo_permanently(self):
+        """Is this user allowed to permanently embargo?"""
+        return self.acct_type in ['admin'] or self.organization != None
+
     def can_view_emails(self):
         """Is this user allowed to view all emails and private contact information?"""
         return self.acct_type in ['admin', 'pro']
@@ -248,8 +241,8 @@ class Profile(models.Model):
         customer.update_subscription(plan='pro')
         customer.save()
         self.acct_type = 'pro'
-        self.date_update = datetime.now()
-        self.monthly_requests = MONTHLY_REQUESTS.get('pro', 0)
+        self.date_update = datetime.datetime.now()
+        self.monthly_requests = settings.MONTHLY_REQUESTS.get('pro', 0)
         self.save()
 
     def cancel_pro_subscription(self):
@@ -288,7 +281,7 @@ class Profile(models.Model):
 
     def generate_confirmation_key(self):
         """Generate random key"""
-        key = ''.join(choice(string.ascii_letters) for _ in range(24))
+        key = utils.generate_key(24)
         self.confirmation_key = key
         self.save()
         return key
@@ -321,6 +314,37 @@ class Profile(models.Model):
         else:
             self.notifications.add(foia)
             self.save()
+
+    def activity_email(self, stream):
+        """Sends an email that is a stream of activities"""
+        count = stream.count()
+        since = 'yesterday' if self.email_pref == 'daily' else 'last week'
+        subject = '%d updates since %s' % (count, since)
+        msg = render_to_string('email/activity.txt', {
+            'user': self.user,
+            'stream': stream,
+            'count': count,
+            'since': since
+        })
+        email = EmailMessage(
+            subject=subject,
+            body=msg,
+            from_email='info@muckrock.com',
+            to=[self.user.email],
+            bcc=['diagnostics@muckrock.com']
+        )
+        email.send(fail_silently=False)
+        return email
+
+    def send_timed_update(self):
+        """Send a timed update of site activity"""
+        current_time = datetime.datetime.now()
+        num_days = 1 if self.email_pref == 'daily' else 7
+        period_start = current_time - datetime.timedelta(num_days)
+        user_stream = actstream.models.user_stream(self.user)
+        user_stream = user_stream.filter(timestamp__gte=period_start)
+        if user_stream.count() > 0:
+            self.activity_email(user_stream)
 
     def send_notifications(self):
         """Send deferred notifications"""
@@ -395,8 +419,11 @@ class Profile(models.Model):
     def wrap_url(self, link, **extra):
         """Wrap a URL for autologin"""
         if self.use_autologin:
-            params = get_parameters(self.user)
-            extra.update(params)
+            lot = LOT.objects.create(
+                user=self.user,
+                type='slow-login',
+                )
+            extra.update({settings.LOT_MIDDLEWARE_PARAM_NAME: lot.uuid})
         return link + '?' + urlencode(extra)
 
 class Statistics(models.Model):

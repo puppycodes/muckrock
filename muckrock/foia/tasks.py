@@ -3,24 +3,28 @@
 from celery.signals import task_failure
 from celery.schedules import crontab
 from celery.task import periodic_task, task
-from django.core.files.base import ContentFile
 from django.core.mail import send_mail
 from django.template.defaultfilters import slugify
 from django.template.loader import render_to_string, get_template
 from django.template import Context
 
+import actstream
+import dill as pickle
 import dbsettings
 import base64
 import json
 import logging
+import numpy as np
 import os.path
 import re
+import requests
 import sys
 import urllib2
 from boto.s3.connection import S3Connection
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 from django_mailgun import MailgunAPIError
+from scipy.sparse import hstack
 
 from muckrock.foia.models import (
     FOIAFile,
@@ -35,7 +39,9 @@ from muckrock.settings import (
     AWS_ACCESS_KEY_ID,
     AWS_SECRET_ACCESS_KEY,
     AWS_AUTOIMPORT_BUCKET_NAME,
+    AWS_STORAGE_BUCKET_NAME,
     )
+from muckrock.task.models import ResponseTask
 from muckrock.vendor import MultipartPostHandler
 
 foia_url = r'(?P<jurisdiction>[\w\d_-]+)-(?P<jidx>\d+)/(?P<slug>[\w\d_-]+)-(?P<idx>\d+)'
@@ -179,6 +185,70 @@ def submit_multi_request(req_pk, **kwargs):
             new_foia.submit()
     req.delete()
 
+@task(ignore_result=True, max_retries=3, name='muckrock.foia.tasks.classify_status')
+def classify_status(task_pk, **kwargs):
+    """Use a machine learning classifier to predict the communications status"""
+    # pylint: disable=too-many-locals
+
+    def get_text_ocr(doc_id):
+        """Get the text OCR from document cloud"""
+        doc_cloud_url = 'http://www.documentcloud.org/api/documents/%s.json'
+        resp = requests.get(doc_cloud_url % doc_id)
+        try:
+            doc_cloud_json = resp.json()
+        except ValueError:
+            logger.error('Doc Cloud error: %s', resp.content)
+            return ''
+        if 'error' in doc_cloud_json:
+            logger.error('Doc Cloud error: %s', doc_cloud_json['error'])
+            return ''
+        text_url = doc_cloud_json['document']['resources']['text']
+        resp = requests.get(text_url)
+        return resp.content.decode('utf-8')
+
+    def get_classifier():
+        """Load the pickled classifier"""
+        with open('muckrock/foia/classifier.pkl', 'rb') as pkl_fp:
+            return pickle.load(pkl_fp)
+
+    def predict_status(vectorizer, selector, classifier, text, pages):
+        """Run the prediction"""
+        # pylint: disable=no-member
+        input_vect = vectorizer.transform([text])
+        pages_vect = np.array([pages], dtype=np.float).transpose()
+        input_vect = hstack([input_vect, pages_vect])
+        input_vect = selector.transform(input_vect)
+        probs = classifier.predict_proba(input_vect)[0]
+        max_prob = max(probs)
+        status = classifier.classes_[list(probs).index(max_prob)]
+        return status, max_prob
+
+    try:
+        resp_task = ResponseTask.objects.get(pk=task_pk)
+    except ResponseTask.DoesNotExist, exc:
+        classify_status.retry(
+                countdown=60*30, args=[task_pk], kwargs=kwargs, exc=exc)
+
+    file_text = []
+    total_pages = 0
+    for file_ in resp_task.communication.files.all():
+        total_pages += file_.pages
+        if file_.is_doccloud() and file_.doc_id:
+            file_text.append(get_text_ocr(file_.doc_id))
+        elif file_.is_doccloud() and not file_.doc_id:
+            # wait longer for document cloud
+            classify_status.retry(
+                    countdown=60*30, args=[task_pk], kwargs=kwargs, exc=exc)
+
+    full_text = resp_task.communication.communication + (' '.join(file_text))
+    vectorizer, selector, classifier = get_classifier()
+
+    status, prob = predict_status(
+        vectorizer, selector, classifier, full_text, total_pages)
+
+    resp_task.predicted_status = status
+    resp_task.status_probability = int(100 * prob)
+    resp_task.save()
 
 @periodic_task(run_every=crontab(hour=5, minute=0), name='muckrock.foia.tasks.followup_requests')
 def followup_requests():
@@ -190,7 +260,13 @@ def followup_requests():
     if options.enable_followup and (options.enable_weekend_followup or is_weekday):
         for foia in FOIARequest.objects.get_followup():
             try:
-                foia.followup()
+                foia.followup(automatic=True)
+                # generate action
+                actstream.action.send(
+                    foia,
+                    verb='automatically followed up',
+                    target=foia.agency
+                )
                 log.append('%s - %d - %s' % (foia.status, foia.pk, foia.title))
             except MailgunAPIError as exc:
                 error_log.append('ERROR: %s - %d - %s - %s' %
@@ -209,12 +285,28 @@ def followup_requests():
 @periodic_task(run_every=crontab(hour=6, minute=0), name='muckrock.foia.tasks.embargo_warn')
 def embargo_warn():
     """Warn users their requests are about to come off of embargo"""
-    for foia in FOIARequest.objects.filter(embargo=True,
-                                           date_embargo=date.today()+timedelta(1)):
+    for foia in FOIARequest.objects.filter(embargo=True, date_embargo=date.today()):
         send_mail('[MuckRock] Embargo about to expire for FOI Request "%s"' % foia.title,
-                  render_to_string('text/foia/embargo.txt', {'request': foia}),
-                  'info@muckrock.com', [foia.user.email])
+                  render_to_string('text/foia/embargo_will_expire.txt', {'request': foia}),
+                  'info@muckrock.com',
+                  [foia.user.email])
 
+@periodic_task(run_every=crontab(hour=0, minute=0), name='muckrock.foia.tasks.embargo_expire')
+def embargo_expire():
+    """Expire requests that have a date_embargo before today"""
+    for foia in FOIARequest.objects.filter(embargo=True,
+                                           permanent_embargo=False,
+                                           date_embargo__lt=date.today()):
+        foia.embargo = False
+        foia.save()
+        actstream.action.send(
+            foia,
+            verb='expired embargo'
+        )
+        send_mail('[MuckRock] Embargo expired for FOI Request "%s"' % foia.title,
+                  render_to_string('text/foia/embargo_did_expire.txt', {'request': foia}),
+                  'info@muckrock.com',
+                  [foia.user.email])
 
 @periodic_task(run_every=crontab(hour=0, minute=0),
                name='muckrock.foia.tasks.set_all_document_cloud_pages')
@@ -320,14 +412,17 @@ def autoimport():
         file_name = os.path.split(key.name)[1]
 
         title = title or file_name
-        access = 'private' if foia.is_embargo() else 'public'
+        access = 'private' if foia.embargo else 'public'
 
         foia_file = FOIAFile(foia=foia, comm=comm, title=title, date=comm.date,
                              source=comm.from_who[:70], access=access)
+        full_file_name = foia_file.ffile.field.generate_filename(
+                foia_file.ffile.instance,
+                file_name)
+        new_key = key.copy(storage_bucket, full_file_name)
+        new_key.set_acl('public-read')
 
-        con_file = ContentFile(key.get_contents_as_string())
-        foia_file.ffile.save(file_name, con_file)
-        con_file.close()
+        foia_file.ffile.name = full_file_name
         foia_file.save()
         if key.size != foia_file.ffile.size:
             raise SizeError(key.size, foia_file.ffile.size, foia_file)
@@ -354,6 +449,7 @@ def autoimport():
 
     conn = S3Connection(AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
     bucket = conn.get_bucket(AWS_AUTOIMPORT_BUCKET_NAME)
+    storage_bucket = conn.get_bucket(AWS_STORAGE_BUCKET_NAME)
     for key in bucket.list(prefix='scans/', delimiter='/'):
         if key.name == 'scans/':
             continue

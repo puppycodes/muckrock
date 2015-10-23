@@ -8,15 +8,45 @@ from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.db.models import Q
 
+import actstream
 from datetime import datetime
 import email
-
 import logging
 
 from muckrock.foia.models import FOIARequest, STATUS
 from muckrock.agency.models import Agency
 from muckrock.jurisdiction.models import Jurisdiction
 
+def generate_status_actions(foia, comm, status):
+    """Generate activity stream actions for agency replies"""
+    # generate action
+    actstream.action.send(
+        foia.agency,
+        verb='sent',
+        action_object=comm,
+        target=foia
+    )
+    if status == 'rejected':
+        # generate action
+        actstream.action.send(
+            foia.agency,
+            verb='rejected',
+            action_object=foia
+        )
+    elif status == 'done':
+        # generate action
+        actstream.action.send(
+            foia.agency,
+            verb='completed',
+            action_object=foia
+        )
+    elif status == 'partial':
+        # generate action
+        actstream.action.send(
+            foia.agency,
+            verb='partially completed',
+            action_object=foia
+        )
 
 class TaskQuerySet(models.QuerySet):
     """Object manager for all tasks"""
@@ -27,6 +57,26 @@ class TaskQuerySet(models.QuerySet):
     def get_resolved(self):
         """Get all resolved tasks"""
         return self.filter(resolved=True)
+
+    def filter_by_foia(self, foia):
+        """Get all tasks that relate to the provided FOIA request."""
+        # pylint:disable=line-too-long
+        # I disabled pylint line length checking here because it's like 4 characters and
+        # I think that shortening these lines would reduce the overall legibility.
+        tasks = []
+        # infer foia from communication
+        tasks += [task.responsetask for task in self.filter(responsetask__communication__foia=foia)]
+        tasks += [task.snailmailtask for task in self.filter(snailmailtask__communication__foia=foia)]
+        tasks += [task.failedfaxtask for task in self.filter(failedfaxtask__communication__foia=foia)]
+        # these tasks have a direct foia attribute
+        tasks += [task.rejectedemailtask for task in self.filter(rejectedemailtask__foia=foia)]
+        tasks += [task.flaggedtask for task in self.filter(flaggedtask__foia=foia)]
+        tasks += [task.statuschangetask for task in self.filter(statuschangetask__foia=foia)]
+        tasks += [task.paymenttask for task in self.filter(paymenttask__foia=foia)]
+        # try matching foia agency with task agency
+        if foia.agency:
+            tasks += [task.newagencytask for task in self.filter(newagencytask__agency=foia.agency)]
+        return tasks
 
 
 class OrphanTaskQuerySet(models.QuerySet):
@@ -50,7 +100,8 @@ class Task(models.Model):
         ordering = ['date_created']
 
     def __unicode__(self):
-        return u'Task: %d' % (self.pk)
+        # pylint:disable=no-self-use
+        return u'Task'
 
     def resolve(self, user=None):
         """Resolve the task"""
@@ -68,7 +119,7 @@ class GenericTask(Task):
     body = models.TextField(blank=True)
 
     def __unicode__(self):
-        return self.subject
+        return u'Generic Task'
 
 
 class OrphanTask(Task):
@@ -85,7 +136,7 @@ class OrphanTask(Task):
     template_name = 'task/orphan.html'
 
     def __unicode__(self):
-        return u'%s: %s' % (self.get_reason_display(), self.communication.foia)
+        return u'Orphan Task'
 
     def move(self, foia_pks):
         """Moves the comm and creates a ResponseTask for it"""
@@ -117,7 +168,10 @@ class OrphanTask(Task):
         domain = self.get_sender_domain()
         if domain is None:
             return
-        blacklist, _ = BlacklistDomain.objects.get_or_create(domain=domain)
+        try:
+            blacklist, _ = BlacklistDomain.objects.get_or_create(domain=domain)
+        except BlacklistDomain.MultipleObjectsReturned:
+            blacklist = BlacklistDomain.objects.filter(domain=domain).first()
         blacklist.resolve_matches()
         return
 
@@ -131,7 +185,7 @@ class SnailMailTask(Task):
     communication = models.ForeignKey('foia.FOIACommunication')
 
     def __unicode__(self):
-        return u'%s: %s' % (self.get_category_display(), self.communication.foia)
+        return u'Snail Mail Task'
 
     def set_status(self, status):
         """Set the status of the comm and FOIA affiliated with this task"""
@@ -159,7 +213,7 @@ class RejectedEmailTask(Task):
     error = models.TextField(blank=True)
 
     def __unicode__(self):
-        return u'%s: %s' % (self.get_category_display(), self.foia)
+        return u'Rejected Email Task'
 
     def agencies(self):
         """Get the agencies who use this email address"""
@@ -180,7 +234,7 @@ class StaleAgencyTask(Task):
     agency = models.ForeignKey(Agency)
 
     def __unicode__(self):
-        return u'Stale Agency: %s' % (self.agency)
+        return u'Stale Agency Task'
 
 
 class FlaggedTask(Task):
@@ -192,13 +246,7 @@ class FlaggedTask(Task):
     jurisdiction = models.ForeignKey(Jurisdiction, blank=True, null=True)
 
     def __unicode__(self):
-        if self.foia:
-            return u'Flagged: %s' % (self.foia)
-        if self.agency:
-            return u'Flagged: %s' % (self.agency)
-        if self.jurisdiction:
-            return u'Flagged: %s' % (self.jurisdiction)
-        return u'Flagged: <None>'
+        return u'Flagged Task'
 
 
 class NewAgencyTask(Task):
@@ -207,7 +255,7 @@ class NewAgencyTask(Task):
     agency = models.ForeignKey(Agency)
 
     def __unicode__(self):
-        return u'New Agency: %s' % (self.agency)
+        return u'New Agency Task'
 
     def pending_requests(self):
         """Returns the requests to be acted on"""
@@ -242,8 +290,13 @@ class ResponseTask(Task):
     communication = models.ForeignKey('foia.FOIACommunication')
     created_from_orphan = models.BooleanField(default=False)
 
+    # for predicting statuses
+    predicted_status = models.CharField(
+            max_length=10, choices=STATUS, blank=True, null=True)
+    status_probability = models.IntegerField(blank=True, null=True)
+
     def __unicode__(self):
-        return u'Response: %s' % (self.communication.foia)
+        return u'Response Task'
 
     def move(self, foia_pks):
         """Moves the associated communication to a new request"""
@@ -277,6 +330,7 @@ class ResponseTask(Task):
         foia.update()
         foia.save()
         logging.info('Request #%d status changed to "%s"', foia.id, status)
+        generate_status_actions(foia, comm, status)
 
     def set_price(self, price):
         """Sets the price of the communication's request"""
@@ -295,7 +349,7 @@ class FailedFaxTask(Task):
     communication = models.ForeignKey('foia.FOIACommunication')
 
     def __unicode__(self):
-        return u'Failed Fax: %s' % (self.communication.foia)
+        return u'Failed Fax Task'
 
 
 class StatusChangeTask(Task):
@@ -306,7 +360,7 @@ class StatusChangeTask(Task):
     foia = models.ForeignKey('foia.FOIARequest')
 
     def __unicode__(self):
-        return u'StatusChange: %s' % self.foia
+        return u'Status Change Task'
 
 
 class PaymentTask(Task):
@@ -316,15 +370,14 @@ class PaymentTask(Task):
     foia = models.ForeignKey('foia.FOIARequest')
 
     def __unicode__(self):
-        return u'Payment: %s for %s' % (self.amount, self.foia)
-
+        return u'Payment Task'
 
 class CrowdfundTask(Task):
     """Created when a crowdfund is finished"""
     crowdfund = models.ForeignKey('crowdfund.CrowdfundRequest')
 
     def __unicode__(self):
-        return u'Crowdfund: %s' % self.crowdfund
+        return u'Crowdfund Task'
 
 
 class GenericCrowdfundTask(Task):
@@ -334,7 +387,7 @@ class GenericCrowdfundTask(Task):
     crowdfund = GenericForeignKey('content_type', 'object_id')
 
     def __unicode__(self):
-        return u'Crowdfund: %s' % self.crowdfund
+        return u'Crowdfund Task'
 
 
 class MultiRequestTask(Task):
@@ -342,7 +395,7 @@ class MultiRequestTask(Task):
     multirequest = models.ForeignKey('foia.FOIAMultiRequest')
 
     def __unicode__(self):
-        return u'Multi-Request: %s' % self.multirequest
+        return u'Multi-Request Task'
 
 
 # Not a task, but used by tasks
