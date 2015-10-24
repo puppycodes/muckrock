@@ -1,2 +1,3 @@
 https://github.com/ivoke/nginx-buildpack.git
-https://github.com/kennethreitz/conda-buildpack.git
+https://github.com/ddollar/heroku-buildpack-apt
+https://github.com/heroku/heroku-buildpack-python.git
