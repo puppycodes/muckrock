@@ -1,3 +1,0 @@
-
-/app/.heroku/python/bin/pip install numpy==1.10.1
-/app/.heroku/python/bin/pip install --use-wheel scipy==0.16.0
