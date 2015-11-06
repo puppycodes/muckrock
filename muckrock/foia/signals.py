@@ -45,4 +45,3 @@ pre_save.connect(foia_update_embargo, sender=FOIARequest,
 
 post_delete.connect(foia_file_delete_s3, sender=FOIAFile,
                     dispatch_uid='muckrock.foia.signals.delete_s3')
-

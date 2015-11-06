@@ -363,7 +363,7 @@
 <script type="text/javascript" src="{% static 'js/task.js' %}"></script>
 <script type="text/javascript" src="{% static 'js/foiaRequest.js' %}"></script>
 <script type="text/javascript">
-    $('#comms-filter').quicksearch('#request .communications-list .communication');
+    $('#comms-filter').quicksearch('#comms .communications-list .communication');
     $('#notes-filter').quicksearch('#notes .note');
     $('.datepicker').datepicker({
         maxDate: '+1m',
@@ -374,6 +374,21 @@
         {% if foia.date_embargo %}
         defaultDate: '{{ foia.date_embargo|date:"m/d/Y" }}'
         {% endif %}
+    });
+    /* CHECKOUT */
+    $('.checkout-button').click(function(e){
+        e.preventDefault();
+        var checkoutData = getCheckoutData($(this));
+        checkout(
+            "{{ stripe_pk }}",
+            "{% static 'apple-touch-icon.png' %}",
+            checkoutData.description,
+            checkoutData.amount,
+            checkoutData.email,
+            checkoutData.label,
+            checkoutData.form
+        );
+        return false;
     });
 </script>
 {% endblock scripts %}

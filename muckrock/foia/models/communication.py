@@ -72,7 +72,15 @@ class FOIACommunication(models.Model):
     reindex_related = ('foia',)
 
     def __unicode__(self):
-        return '%s: %s...' % (self.date.strftime('%m/%d/%y'), self.communication[:80])
+        if self.delivered:
+            if self.delivered == 'email':
+                return u'an email'
+            elif self.delivered == 'mail':
+                return u'a letter'
+            else:
+                return u'a fax'
+        else:
+            return u'a message'
 
     def get_absolute_url(self):
         """The url for this object"""
@@ -273,7 +281,11 @@ class FOIANote(models.Model):
 
     def __unicode__(self):
         # pylint: disable=no-member
-        return 'Note by %s on %s' % (self.author.get_full_name(), self.foia.title)
+        if self.author:
+            author = self.author
+        else:
+            author = self.foia.user
+        return 'Note by %s on %s' % (author.get_full_name(), self.foia.title)
 
     class Meta:
         # pylint: disable=too-few-public-methods
