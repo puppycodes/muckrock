@@ -17,7 +17,6 @@ import actstream
 from datetime import datetime
 import json
 import logging
-import stripe
 
 from muckrock.foia.codes import CODES
 from muckrock.foia.forms import \
@@ -33,7 +32,7 @@ from muckrock.foia.models import \
 from muckrock.foia.views.composers import get_foia
 from muckrock.foia.views.comms import move_comm, delete_comm, save_foia_comm, resend_comm
 from muckrock.qanda.models import Question
-from muckrock.settings import STRIPE_PUB_KEY, STRIPE_SECRET_KEY
+from muckrock.settings import STRIPE_PUB_KEY
 from muckrock.tags.models import Tag
 from muckrock.task.models import Task, FlaggedTask, StatusChangeTask
 from muckrock.views import class_view_decorator, MRFilterableListView
@@ -41,7 +40,6 @@ from muckrock.views import class_view_decorator, MRFilterableListView
 # pylint: disable=too-many-ancestors
 
 logger = logging.getLogger(__name__)
-stripe.api_key = STRIPE_SECRET_KEY
 STATUS_NODRAFT = [st for st in STATUS if st != ('started', 'Draft')]
 
 class RequestList(MRFilterableListView):
@@ -66,6 +64,7 @@ class RequestList(MRFilterableListView):
     def get_queryset(self):
         """Limits requests to those visible by current user"""
         objects = super(RequestList, self).get_queryset()
+        objects = objects.select_related('jurisdiction')
         return objects.get_viewable(self.request.user)
 
 @class_view_decorator(login_required)
@@ -100,7 +99,8 @@ class MyRequestList(RequestList):
 
     def get_queryset(self):
         """Gets multirequests as well, limits to just those by the current user"""
-        single_req = FOIARequest.objects.filter(user=self.request.user)
+        single_req = (FOIARequest.objects.filter(user=self.request.user)
+                                         .select_related('jurisdiction'))
         multi_req = FOIAMultiRequest.objects.filter(user=self.request.user)
         single_req = self.sort_list(self.filter_list(single_req))
         return list(single_req) + list(multi_req)
@@ -112,8 +112,10 @@ class FollowingRequestList(RequestList):
         """Limits FOIAs to those followed by the current user"""
         objects = actstream.models.following(self.request.user, FOIARequest)
         # actstream returns a list of objects, so we have to turn it into a queryset
-        objects = FOIARequest.objects.filter(id__in=[_object.pk for _object in objects])
+        objects = FOIARequest.objects.filter(
+                id__in=[_object.pk for _object in objects if _object])
         objects = self.sort_list(objects)
+        objects = objects.select_related('jurisdiction')
         return self.filter_list(objects)
 
 # pylint: disable=no-self-use

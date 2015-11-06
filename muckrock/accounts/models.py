@@ -4,11 +4,10 @@ Models for the accounts application
 
 from django.contrib.auth.models import User
 from django.conf import settings
-from django.core.mail import EmailMessage, EmailMultiAlternatives
+from django.core.mail import EmailMessage
 from django.db import models
 from django.template.loader import render_to_string
 
-import actstream
 import datetime
 import dbsettings
 from easy_thumbnails.fields import ThumbnailerImageField
@@ -25,6 +24,7 @@ from muckrock.organization.models import Organization
 from muckrock.values import TextValue
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
+stripe.api_version = '2015-10-16'
 
 class EmailOptions(dbsettings.Group):
     """DB settings for sending email"""
@@ -129,8 +129,9 @@ class Profile(models.Model):
     # for limiting # of requests / month
     monthly_requests = models.IntegerField(default=0)
     date_update = models.DateField()
-    # for stripe
-    stripe_id = models.CharField(max_length=255, blank=True)
+    # for Stripe
+    customer_id = models.CharField(max_length=255, blank=True)
+    subscription_id = models.CharField(max_length=255, blank=True)
 
     def __unicode__(self):
         return u"%s's Profile" % unicode(self.user).capitalize()
@@ -223,60 +224,62 @@ class Profile(models.Model):
         return self.acct_type in ['admin', 'pro']
 
     def customer(self):
-        """Get stripe customer or create one if it doesn't exist"""
+        """Retrieve the customer from Stripe or create one if it doesn't exist. Then return it."""
         try:
-            customer = stripe.Customer.retrieve(self.stripe_id)
-        except stripe.InvalidRequestError:
+            if not self.customer_id:
+                raise AttributeError('No Stripe ID')
+            customer = stripe.Customer.retrieve(self.customer_id)
+        except (AttributeError, stripe.InvalidRequestError):
             customer = stripe.Customer.create(
                 description=self.user.username,
                 email=self.user.email
             )
-            self.stripe_id = customer.id
+            self.customer_id = customer.id
             self.save()
         return customer
 
-    def start_pro_subscription(self):
-        """Subscribe this profile to a pro plan"""
+    def start_pro_subscription(self, token=None):
+        """Subscribe this profile to a professional plan. Return the subscription."""
+        # create the stripe subscription
         customer = self.customer()
-        customer.update_subscription(plan='pro')
+        if self.subscription_id:
+            raise AttributeError('Only allowed one active subscription at a time.')
+        if not token and not customer.default_source:
+            raise AttributeError('No payment method provided for this subscription.')
+        subscription = customer.subscriptions.create(plan='pro', source=token)
         customer.save()
+        # modify the profile object (should this be part of a webhook callback?)
+        self.subscription_id = subscription.id
         self.acct_type = 'pro'
         self.date_update = datetime.datetime.now()
         self.monthly_requests = settings.MONTHLY_REQUESTS.get('pro', 0)
         self.save()
+        return subscription
 
     def cancel_pro_subscription(self):
-        """Unsubscribe this profile form a pro plan"""
+        """Unsubscribe this profile from a professional plan. Return the cancelled subscription."""
+        if not self.subscription_id:
+            raise AttributeError('There is no subscription to cancel.')
         customer = self.customer()
-        customer.cancel_subscription()
-        customer.save()
+        subscription = customer.subscriptions.retrieve(self.subscription_id)
+        subscription = subscription.delete()
+        customer = customer.save()
+        self.subscription_id = ''
         self.acct_type = 'community'
+        self.monthly_requests = settings.MONTHLY_REQUESTS.get('community', 0)
         self.save()
+        return subscription
 
-    def pay(self, token, amount, desc):
+    def pay(self, token, amount, metadata):
         """Create a stripe charge for the user"""
-        # pylint: disable=no-member
-        try:
-            stripe.Charge.create(
-                amount=amount,
-                currency='usd',
-                card=token,
-                description='%s: %s' % (self.user.username, desc)
-            )
-        except stripe.CardError as exception:
-            raise ValueError(exception)
-
-    def api_pay(self, amount, desc):
-        """Create a stripe charge for the user through the API"""
-        # pylint: disable=no-member
-        customer = self.customer()
-        desc = '%s: %s' % (self.user.username, desc)
-        # always use card on file
+        # pylint: disable=no-self-use
+        if not metadata.get('email') or not metadata.get('action'):
+            raise ValueError('The charge metadata is malformed.')
         stripe.Charge.create(
             amount=amount,
             currency='usd',
-            customer=customer.id,
-            description=desc
+            source=token,
+            metadata=metadata
         )
 
     def generate_confirmation_key(self):
@@ -314,46 +317,6 @@ class Profile(models.Model):
         else:
             self.notifications.add(foia)
             self.save()
-
-    def activity_email(self, stream):
-        """Sends an email that is a stream of activities"""
-        count = stream.count()
-        since = 'yesterday' if self.email_pref == 'daily' else 'last week'
-        subject = '%d updates since %s' % (count, since)
-        text_content = render_to_string('email/activity.txt', {
-            'user': self.user,
-            'stream': stream,
-            'count': count,
-            'since': since
-        })
-        html_content = render_to_string('email/activity.html', {
-            'user': self.user,
-            'stream': stream,
-            'count': count,
-            'since': since,
-            'base_url': 'https://www.muckrock.com'
-        })
-        email = EmailMultiAlternatives(
-            subject=subject,
-            body=text_content,
-            from_email='MuckRock <info@muckrock.com>',
-            to=[self.user.email],
-            bcc=['diagnostics@muckrock.com']
-        )
-        email.attach_alternative(html_content, 'text/html')
-        email.send(fail_silently=False)
-        return email
-
-    def send_timed_update(self):
-        """Send a timed update of site activity"""
-        current_time = datetime.datetime.now()
-        num_days = 1 if self.email_pref == 'daily' else 7
-        period_start = current_time - datetime.timedelta(num_days)
-        user_stream = actstream.models.user_stream(self.user)
-        user_stream = user_stream.filter(timestamp__gte=period_start)\
-                                 .exclude(verb='started following')
-        if user_stream.count() > 0:
-            self.activity_email(user_stream)
 
     def send_notifications(self):
         """Send deferred notifications"""
@@ -452,6 +415,7 @@ class Statistics(models.Model):
     total_requests_no_docs = models.IntegerField(null=True, blank=True)
     total_requests_partial = models.IntegerField(null=True, blank=True)
     total_requests_abandoned = models.IntegerField(null=True, blank=True)
+    requests_processing_days = models.IntegerField(null=True, blank=True)
 
     orphaned_communications = models.IntegerField(null=True, blank=True)
 

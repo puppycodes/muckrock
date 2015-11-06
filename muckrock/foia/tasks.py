@@ -197,10 +197,11 @@ def classify_status(task_pk, **kwargs):
         try:
             doc_cloud_json = resp.json()
         except ValueError:
-            logger.error('Doc Cloud error: %s', resp.content)
+            logger.warn('Doc Cloud error for %s: %s', doc_id, resp.content)
             return ''
         if 'error' in doc_cloud_json:
-            logger.error('Doc Cloud error: %s', doc_cloud_json['error'])
+            logger.warn('Doc Cloud error for %s: %s',
+                    doc_id, doc_cloud_json['error'])
             return ''
         text_url = doc_cloud_json['document']['resources']['text']
         resp = requests.get(text_url)
@@ -238,7 +239,7 @@ def classify_status(task_pk, **kwargs):
         elif file_.is_doccloud() and not file_.doc_id:
             # wait longer for document cloud
             classify_status.retry(
-                    countdown=60*30, args=[task_pk], kwargs=kwargs, exc=exc)
+                    countdown=60*30, args=[task_pk], kwargs=kwargs)
 
     full_text = resp_task.communication.communication + (' '.join(file_text))
     vectorizer, selector, classifier = get_classifier()
@@ -479,7 +480,7 @@ def autoimport():
 
                 foia.status = status or foia.status
                 if foia.status in ['done', 'rejected', 'no_docs']:
-                    foia.date_done = file_date
+                    foia.date_done = file_date.date()
                 if code == 'FEE' and arg:
                     foia.price = Decimal(arg)
                 if id_:

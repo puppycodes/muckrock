@@ -17,10 +17,9 @@ from django.template import RequestContext, Context
 from django.utils.encoding import smart_text
 
 import actstream
-from datetime import datetime
+from datetime import datetime, date
 import json
 import logging
-import stripe
 from random import choice
 import string
 
@@ -37,13 +36,12 @@ from muckrock.foia.models import \
     FOIACommunication, \
     STATUS
 from muckrock.jurisdiction.models import Jurisdiction
-from muckrock.settings import STRIPE_PUB_KEY, STRIPE_SECRET_KEY, MONTHLY_REQUESTS
+from muckrock.settings import STRIPE_PUB_KEY, MONTHLY_REQUESTS
 from muckrock.task.models import NewAgencyTask, MultiRequestTask
 
 # pylint: disable=too-many-ancestors
 
 logger = logging.getLogger(__name__)
-stripe.api_key = STRIPE_SECRET_KEY
 STATUS_NODRAFT = [st for st in STATUS if st != ('started', 'Draft')]
 
 # HELPER FUNCTIONS
@@ -73,7 +71,7 @@ def _make_new_agency(request, agency, jurisdiction):
         slug=(slugify(agency[:255]) or 'untitled'),
         jurisdiction=jurisdiction,
         user=user,
-        approved=False,
+        status='pending',
     )
     NewAgencyTask.objects.create(
             user=user,
@@ -209,7 +207,7 @@ def create_request(request):
     initial_data = {}
     clone = False
     parent = None
-    if request.GET.get('clone', False):
+    try:
         foia_pk = request.GET['clone']
         foia = get_object_or_404(FOIARequest, pk=foia_pk)
         initial_data = {
@@ -226,6 +224,10 @@ def create_request(request):
         initial_data['jurisdiction'] = level
         clone = True
         parent = foia
+    except (KeyError, ValueError):
+        # KeyError if no clone was passed in
+        # Value error if invalid clone is passed in
+        pass
     if request.method == 'POST':
         foia_request = _process_request_form(request)
         if foia_request:
@@ -428,6 +430,7 @@ def draft_multirequest(request, slug, idx):
                     profile.monthly_requests -= request_count['monthly_requests']
                     profile.save()
                     foia.status = 'submitted'
+                    foia.date_processing = date.today()
                     foia.save()
                     messages.success(request, 'Your multi-request was submitted.')
                     MultiRequestTask.objects.create(multirequest=foia)
