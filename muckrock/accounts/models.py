@@ -38,6 +38,7 @@ ACCT_TYPES = [
     ('community', 'Community'),
     ('pro', 'Professional'),
     ('proxy', 'Proxy'),
+    ('robot', 'Robot'),
 ]
 
 class Profile(models.Model):
@@ -398,6 +399,7 @@ class Profile(models.Model):
             extra.update({settings.LOT_MIDDLEWARE_PARAM_NAME: lot.uuid})
         return link + '?' + urlencode(extra)
 
+
 class Statistics(models.Model):
     """Nightly statistics"""
     # pylint: disable=invalid-name
@@ -460,6 +462,7 @@ class Statistics(models.Model):
     total_unresolved_payment_tasks = models.IntegerField(null=True, blank=True)
     total_crowdfundpayment_tasks = models.IntegerField(null=True, blank=True)
     total_unresolved_crowdfundpayment_tasks = models.IntegerField(null=True, blank=True)
+    daily_robot_response_tasks = models.IntegerField(null=True, blank=True)
 
     # notes
     public_notes = models.TextField(default='', blank=True)

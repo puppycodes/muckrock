@@ -135,7 +135,10 @@ class Organization(models.Model):
         if self.members.count() == self.max_users:
             raise AttributeError('No open seat for new members.')
         if user.profile.organization:
-            raise AttributeError('%s is already a member of a different organization.' % user)
+            which_org = 'this' if user.profile.organization == self else 'a different'
+            raise AttributeError('%s is already a member of %s organization.' %
+                (user.first_name, which_org)
+            )
         if Organization.objects.filter(owner=user).exists():
             raise AttributeError('%s is already an owner of a different organization.' % user)
         if not self.has_member(user):
@@ -182,9 +185,15 @@ class Organization(models.Model):
         self.stripe_id = subscription.id
         self.active = True
         self.save()
-        # if the owner has a pro account, cancel it
+
+        # If the owner has a pro account, cancel it.
+        # Assume the pro user has an active subscription.
+        # On the off chance that they don't, just silence the error.
         if self.owner.profile.acct_type == 'pro':
-            self.owner.profile.cancel_pro_subscription()
+            try:
+                self.owner.profile.cancel_pro_subscription()
+            except AttributeError:
+                pass
         self.owner.profile.subscription_id = subscription.id
         self.owner.profile.save()
         return subscription

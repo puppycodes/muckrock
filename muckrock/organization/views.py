@@ -10,15 +10,18 @@ from django.utils.decorators import method_decorator
 from django.views.generic import ListView, CreateView, UpdateView, DeleteView, DetailView
 
 import actstream
+import datetime
 import logging
 import stripe
 
+from muckrock.foia.models import FOIARequest
 from muckrock.organization.models import Organization
 from muckrock.organization.forms import CreateForm, \
                                         StaffCreateForm, \
                                         UpdateForm, \
                                         StaffUpdateForm, \
                                         AddMembersForm
+from muckrock.settings import STRIPE_PUB_KEY
 
 
 class OrganizationListView(ListView):
@@ -107,10 +110,22 @@ class OrganizationActivateView(UpdateView):
             return redirect(organization.get_absolute_url())
         return super(OrganizationActivateView, self).dispatch(*args, **kwargs)
 
+    def get_context_data(self, **kwargs):
+        """Adds Stripe pk and user's email to activation form."""
+        context = super(OrganizationActivateView, self).get_context_data(**kwargs)
+        organization = self.get_object()
+        context['org'] = organization
+        context['base_users'] = organization.max_users
+        context['base_requests'] = organization.monthly_requests
+        context['base_price'] = organization.monthly_cost/100.00
+        context['user_email'] = self.request.user.email
+        context['stripe_pk'] = STRIPE_PUB_KEY
+        return context
+
     def form_valid(self, form):
         """When the form is valid, activate the organization."""
         # should expect a token from Stripe
-        token = self.request.POST.get('token')
+        token = self.request.POST.get('stripe_token')
         organization = self.get_object()
         # Do not save the form! The activate_subscription method needs to compare the
         # new number of seats to the existing number of seats. If the UpdateForm is saved,
@@ -171,6 +186,16 @@ class OrganizationUpdateView(UpdateView):
         if self.request.user.is_staff:
             form_class = StaffUpdateForm
         return form_class
+
+    def get_context_data(self, **kwargs):
+        """Adds Stripe pk and user's email to activation form."""
+        context = super(OrganizationUpdateView, self).get_context_data(**kwargs)
+        organization = self.get_object()
+        context['org'] = organization
+        context['base_users'] = organization.max_users
+        context['base_requests'] = organization.monthly_requests
+        context['base_price'] = organization.monthly_cost/100.00
+        return context
 
     def form_valid(self, form):
         """Should handle a valid form differently depending on whether the user is staff."""
@@ -236,18 +261,32 @@ class OrganizationDetailView(DetailView):
         """Add extra context data"""
         context = super(OrganizationDetailView, self).get_context_data(**kwargs)
         organization = context['organization']
+        context['is_staff'] = False
+        context['is_owner'] = False
+        context['is_member'] = False
         user = self.request.user
-        member_accounts = [profile.user for profile in organization.members.all()]
         if user.is_authenticated():
             context['is_staff'] = user.is_staff
             context['is_owner'] = organization.is_owned_by(user)
             context['is_member'] = user.profile.is_member_of(organization)
-        else:
-            context['is_staff'] = False
-            context['is_owner'] = False
-            context['is_member'] = False
-        context['members'] = member_accounts
-        context['form'] = AddMembersForm()
+        context['requests'] = FOIARequest.objects.organization(organization).get_viewable(user)
+        context['members'] = organization.members.select_related('user').all()
+        context['available'] = {
+            'requests': organization.monthly_requests - organization.num_requests,
+            'seats': organization.max_users - organization.members.count()
+        }
+        context['progress'] = {
+            'requests': (1.0-(1.0*organization.num_requests)/organization.monthly_requests)*100,
+            'seats': (1.0-(1.0*organization.members.count())/organization.max_users)*100
+        }
+        try:
+            date_update = organization.date_update
+            refresh_date = datetime.date(date_update.year, date_update.month + 1, 1)
+        except ValueError:
+            # ValueError should happen if the current month is December
+            refresh_date = datetime.date(date_update.year + 1, 1, 1)
+        context['refresh_date'] = refresh_date
+        context['add_members_form'] = AddMembersForm()
         context['sidebar_admin_url'] = reverse(
             'admin:organization_organization_change',
             args=(organization.pk,))
@@ -261,8 +300,8 @@ class OrganizationDetailView(DetailView):
         action = request.POST.get('action', '')
         if action == 'add_members':
             self.add_members(request)
-        elif action == 'remove_members':
-            self.remove_members(request)
+        elif action == 'remove_member':
+            self.remove_member(request)
         else:
             messages.error(request, 'This action is not available.')
         context = self.get_context_data()
@@ -309,22 +348,19 @@ class OrganizationDetailView(DetailView):
                 messages.success(request, 'You added %d members.' % members_added)
         return
 
-    def remove_members(self, request):
-        """Removes a list of members from an organization"""
+    def remove_member(self, request):
+        """Removes a single member from an organization"""
         organization = self.get_object()
-        members = request.POST.getlist('members')
-        members_removed = 0
-        if not organization.is_owned_by(request.user) and not request.user.is_staff:
-            # let members remove themselves from the organization, but nobody else
-            logging.debug(members)
-            logging.debug(request.user.pk)
-            members = [user_pk for user_pk in members if user_pk == unicode(request.user.pk)]
-            logging.debug(members)
-            if len(members) > 1:
-                messages.error(request, 'You cannot remove other members this organization.')
-        for user_pk in members:
-            user = User.objects.get(pk=user_pk)
-            logging.debug('remove %s', user)
+        try:
+            user_pk = request.POST['member']
+            user = User.objects.select_related('profile').get(pk=user_pk)
+        except (KeyError, User.DoesNotExist):
+            messages.error(request, 'No member selected to remove.')
+            return
+        # let members remove themselves from the organization, but nobody else
+        removing_self = user == request.user
+        user_is_owner = organization.owner == request.user
+        if removing_self or user_is_owner or request.user.is_staff:
             if organization.remove_member(user):
                 actstream.action.send(
                     request.user,
@@ -332,15 +368,12 @@ class OrganizationDetailView(DetailView):
                     action_object=user,
                     target=organization
                 )
-                logging.info('%s %s %s from %s.',
-                    request.user,
-                    'removed',
-                    user,
-                    organization
-                )
-                members_removed += 1
-        if members_removed > 0:
-            msg = 'You revoked membership from %s ' % members_removed
-            msg += 'person.' if members_removed == 1 else 'people.'
-            messages.success(request, msg)
+                logging.info('%s %s %s from %s.', request.user, 'removed', user, organization)
+                if removing_self:
+                    msg = 'You are no longer a member.'
+                else:
+                    msg = 'You removed membership from %s.' % user.first_name
+                messages.success(request, msg)
+        else:
+            messages.error(request, 'You do not have permission to remove this member.')
         return

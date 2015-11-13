@@ -306,7 +306,7 @@ ABSOLUTE_URL_OVERRIDES = {
     'auth.user': lambda u: reverse('acct-profile', kwargs={'user_name': u.username}),
 }
 
-DBSETTINGS_USE_SITES = False
+DBSETTINGS_USE_SITES = True
 
 if DEBUG:
     TEST_RUNNER = 'django_nose.NoseTestSuiteRunner'
@@ -354,6 +354,7 @@ MONTHLY_REQUESTS = {
     'pro': 20,
     'proxy': 20,
     'org': 50,
+    'robot': 0,
 }
 
 MARKDOWN_DEUX_STYLES = {
