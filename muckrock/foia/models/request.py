@@ -217,6 +217,8 @@ class FOIARequest(models.Model):
                 self.date_embargo = default_date if not existing_date else existing_date
             else:
                 self.date_embargo = None
+        if self.status == 'submitted' and self.date_processing is None:
+            self.date_processing = date.today()
         super(FOIARequest, self).save(*args, **kwargs)
 
     def is_editable(self):
@@ -225,6 +227,9 @@ class FOIARequest(models.Model):
 
     def is_appealable(self):
         """Can this request be appealed by the user?"""
+        if not self.jurisdiction.can_appeal():
+            return False
+
         if self.status in ['processed', 'appealing']:
             # can appeal these only if they are over due
             if not self.date_due:
