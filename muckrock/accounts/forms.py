@@ -5,11 +5,13 @@ Forms for accounts application
 from django import forms
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth.models import User
+from django.utils.text import slugify
 
 from localflavor.us.forms import USZipCodeField
 import re
 
 from muckrock.accounts.models import Profile
+from muckrock.organization.models import Organization
 
 
 class ProfileForm(forms.ModelForm):
@@ -47,32 +49,47 @@ class UserChangeForm(ProfileForm):
 
 
 class RegisterForm(UserCreationForm):
-    """Register for a community account"""
-
-    username = forms.CharField(widget=forms.TextInput(attrs={'class': 'required'}))
-    email = forms.EmailField(widget=forms.TextInput(attrs={'class': 'required'}))
-    first_name = forms.CharField(widget=forms.TextInput(attrs={'class': 'required'}))
-    last_name = forms.CharField(widget=forms.TextInput(attrs={'class': 'required'}))
-    password1 = forms.CharField(label='Password',
-                                widget=forms.PasswordInput(attrs={'class': 'required'}))
-    password2 = forms.CharField(label='Password Confirmation',
-                                widget=forms.PasswordInput(attrs={'class': 'required'}))
-
+    """Register for a basic account"""
     class Meta(UserCreationForm.Meta):
-        # pylint: disable=too-few-public-methods
         fields = ['username', 'email', 'first_name', 'last_name', 'password1', 'password2']
+
+    username = forms.CharField()
+    email = forms.EmailField()
+    first_name = forms.CharField()
+    last_name = forms.CharField()
+    password1 = forms.CharField(label='Password', widget=forms.PasswordInput())
+    password2 = forms.CharField(label='Password Confirmation', widget=forms.PasswordInput())
 
     def clean_username(self):
         """Do a case insensitive uniqueness check and clean username input"""
         username = self.cleaned_data['username']
         username = re.sub(r'[^\w\-.@ ]', '', username) # strips illegal characters from username
         if User.objects.filter(username__iexact=username):
-            raise forms.ValidationError("User with this Username already exists.")
+            raise forms.ValidationError("This username is taken.")
         return username
 
     def clean_email(self):
         """Do a case insensitive uniqueness check"""
         email = self.cleaned_data['email']
         if User.objects.filter(email__iexact=email):
-            raise forms.ValidationError("User with this Email already exists.")
+            raise forms.ValidationError("An account with this email already exists.")
         return email
+
+
+class RegisterOrganizationForm(RegisterForm):
+    """Register for an organization account"""
+    organization_name = forms.CharField()
+
+    def clean_organization_name(self):
+        """Check for an existing organizaiton."""
+        organization_name = self.cleaned_data['organization_name']
+        slug = slugify(organization_name)
+        try:
+            Organization.objects.get(slug=slug)
+        except Organization.DoesNotExist:
+            return organization_name
+        raise forms.ValidationError('Organization already exists with this name.')
+
+    def create_organization(self, owner):
+        """Creates and returns an organization from the form data"""
+        return Organization.objects.create(name=self.cleaned_data['organization_name'], owner=owner)

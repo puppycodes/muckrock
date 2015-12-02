@@ -2,27 +2,29 @@
 Tests using nose for the accounts application
 """
 
-from django.contrib.auth.models import User
-from django.core import mail
+from django.contrib.auth.models import User, AnonymousUser
+from django.contrib.auth.views import login
 from django.core.urlresolvers import reverse
 from django.forms import ValidationError
 from django.test import TestCase, RequestFactory
 
 from datetime import datetime, date, timedelta
 import json
+import logging
 from mock import Mock, patch
 import nose.tools
 
 from muckrock.accounts.forms import UserChangeForm, RegisterForm
-from muckrock.accounts.views import stripe_webhook
+from muckrock.accounts import views as accounts_views
 from muckrock.factories import UserFactory, ProfileFactory
-from muckrock.tests import get_allowed, post_allowed, post_allowed_bad, get_post_unallowed
+from muckrock.organization.models import Organization
 from muckrock.settings import MONTHLY_REQUESTS
-from muckrock.utils import get_stripe_token
+from muckrock.utils import get_stripe_token, mock_middleware
 
 ok_ = nose.tools.ok_
 eq_ = nose.tools.eq_
 raises = nose.tools.raises
+logger = logging.getLogger(__name__)
 
 # allow long names, methods that could be functions and too many public methods in tests
 # pylint: disable=invalid-name
@@ -44,9 +46,162 @@ mock_customer.update_subscription.return_value = mock_subscription
 mock_customer.cancel_subscription.return_value = mock_subscription
 mock_customer.subscriptions.create.return_value = mock_subscription
 mock_customer.subscriptions.retrieve.return_value = mock_subscription
+mock_customer.subscriptions.data = [mock_subscription]
 MockCustomer = Mock()
 MockCustomer.create.return_value = mock_customer
 MockCustomer.retrieve.return_value = mock_customer
+
+def http_get_response(url, view, user=AnonymousUser()):
+    """Handles making GET requests, returns the response."""
+    request_factory = RequestFactory()
+    request = request_factory.get(url)
+    request = mock_middleware(request)
+    request.user = user
+    response = view(request)
+    return response
+
+def http_post_response(url, view, data, user=AnonymousUser()):
+    """Handles making POST requests, returns the response."""
+    request_factory = RequestFactory()
+    request = request_factory.post(url, data)
+    request = mock_middleware(request)
+    request.user = user
+    response = view(request)
+    return response
+
+
+class TestBasicSignupView(TestCase):
+    """The BasicSignupView handles registration of basic accounts."""
+    def setUp(self):
+        self.view = accounts_views.BasicSignupView.as_view()
+        self.url = reverse('accounts-signup-basic')
+        self.data = {
+            'username': 'test-user',
+            'email': 'test@muckrock.com',
+            'first_name': 'Test',
+            'last_name': 'User',
+            'password1': 'password',
+            'password2': 'password'
+        }
+
+    def test_logged_out_get(self):
+        """Getting the view while logged out should show the registration form."""
+        response = http_get_response(self.url, self.view)
+        eq_(response.status_code, 200)
+
+    def test_logged_in_get(self):
+        """Getting the view while logged in should redirect."""
+        user = UserFactory()
+        response = http_get_response(self.url, self.view, user)
+        eq_(response.status_code, 302)
+
+    def test_logged_out_post(self):
+        """Posting valid data while logged out should create a new basic account."""
+        response = http_post_response(self.url, self.view, self.data)
+        eq_(response.status_code, 302,
+            'Should redirect to the new account upon creation.')
+        user = User.objects.get(username=self.data['username'])
+        ok_(user, 'The user should be created.')
+        eq_(user.profile.acct_type, 'basic', 'The user should be given a basic plan.')
+
+    @raises(User.DoesNotExist)
+    def test_logged_in_post(self):
+        """Posting valid data while logged in should redirect without creating a new user."""
+        user = UserFactory()
+        response = http_post_response(self.url, self.view, self.data, user)
+        eq_(response.status_code, 302)
+        User.objects.get(username=self.data['username'])
+
+
+class TestProfessionalSignupView(TestCase):
+    """The ProfessionalSignupView handles registration and subscription of professional accounts."""
+    def setUp(self):
+        self.view = accounts_views.ProfessionalSignupView.as_view()
+        self.url = reverse('accounts-signup-professional')
+        self.data = {
+            'username': 'test-user',
+            'email': 'test@muckrock.com',
+            'first_name': 'Test',
+            'last_name': 'User',
+            'password1': 'password',
+            'password2': 'password',
+            'token': 'test'
+        }
+
+    def test_logged_out_get(self):
+        """Getting the view while logged out should show the registration form."""
+        response = http_get_response(self.url, self.view)
+        eq_(response.status_code, 200)
+
+    def test_logged_in_get(self):
+        """Getting the view while logged in should redirect."""
+        user = UserFactory()
+        response = http_get_response(self.url, self.view, user)
+        eq_(response.status_code, 302)
+
+    @patch('muckrock.accounts.models.Profile.start_pro_subscription')
+    def test_logged_out_post(self, mock_subscribe):
+        """Posting valid data while logged out should create a new professional account."""
+        response = http_post_response(self.url, self.view, self.data)
+        eq_(response.status_code, 302,
+            'Should redirect to the new account upon creation.')
+        user = User.objects.get(username=self.data['username'])
+        ok_(user, 'The user should be created.')
+        ok_(mock_subscribe.called_once)
+
+    @raises(User.DoesNotExist)
+    def test_logged_in_post(self):
+        """Posting valid data while logged in should redirect without creating a new user."""
+        user = UserFactory()
+        response = http_post_response(self.url, self.view, self.data, user)
+        eq_(response.status_code, 302)
+        User.objects.get(username=self.data['username'])
+
+
+class TestOrganizationSignupView(TestCase):
+    """The OrganizationSignupView handles registration of organization accounts."""
+    def setUp(self):
+        self.view = accounts_views.OrganizationSignupView.as_view()
+        self.url = reverse('accounts-signup-organization')
+        self.data = {
+            'username': 'test-user',
+            'email': 'test@muckrock.com',
+            'first_name': 'Test',
+            'last_name': 'User',
+            'password1': 'password',
+            'password2': 'password',
+            'organization_name': 'Test Org'
+        }
+
+    def test_logged_out_get(self):
+        """Getting the view while logged out should show the registration form."""
+        response = http_get_response(self.url, self.view)
+        eq_(response.status_code, 200)
+
+    def test_logged_in_get(self):
+        """Getting the view while logged in should redirect."""
+        user = UserFactory()
+        response = http_get_response(self.url, self.view, user)
+        eq_(response.status_code, 302)
+
+    def test_logged_out_post(self):
+        """Posting valid data while logged out should create a new professional account."""
+        response = http_post_response(self.url, self.view, self.data)
+        eq_(response.status_code, 302,
+            'Should redirect to the org activation page upon creation.')
+        user = User.objects.get(username=self.data['username'])
+        org = Organization.objects.get(name=self.data['organization_name'])
+        ok_(user, 'The user should be created.')
+        ok_(org, 'The org should be created.')
+        eq_(org.owner, user, 'The user should be made an owner of the org.')
+
+    @raises(User.DoesNotExist)
+    def test_logged_in_post(self):
+        """Posting valid data while logged in should redirect without creating a new user."""
+        user = UserFactory()
+        response = http_post_response(self.url, self.view, self.data, user)
+        eq_(response.status_code, 302)
+        User.objects.get(username=self.data['username'])
 
 
 class TestAccountFormsUnit(TestCase):
@@ -98,6 +253,7 @@ class TestAccountFormsUnit(TestCase):
         }
         form = RegisterForm(data)
         nose.tools.assert_false(form.is_valid())
+
 
 @patch('stripe.Customer', MockCustomer)
 @patch('stripe.Charge', mock_charge)
@@ -190,9 +346,18 @@ class TestProfileUnit(TestCase):
         self.profile.cancel_pro_subscription()
         self.profile.refresh_from_db()
         ok_(mock_subscription.delete.called)
-        eq_(self.profile.acct_type, 'community')
+        eq_(self.profile.acct_type, 'basic')
         ok_(not self.profile.subscription_id)
-        eq_(self.profile.monthly_requests, MONTHLY_REQUESTS.get('community'))
+        eq_(self.profile.monthly_requests, MONTHLY_REQUESTS.get('basic'))
+
+    def test_cancel_legacy_subscription(self):
+        """Test ending a pro subscription when missing a subscription ID"""
+        pro_profile = ProfileFactory(acct_type='basic',
+                                     monthly_requests=MONTHLY_REQUESTS.get('pro'))
+        ok_(not pro_profile.subscription_id)
+        pro_profile.cancel_pro_subscription()
+        eq_(pro_profile.acct_type, 'basic')
+        eq_(pro_profile.monthly_requests, MONTHLY_REQUESTS.get('basic'))
 
 
 class TestStripeIntegration(TestCase):
@@ -232,142 +397,88 @@ class TestStripeIntegration(TestCase):
 @patch('stripe.Charge', Mock())
 class TestAccountFunctional(TestCase):
     """Functional tests for account"""
-    fixtures = ['test_users.json', 'test_profiles.json', 'test_statistics.json']
-
     def setUp(self):
         """Set up tests"""
-        mail.outbox = []
+        self.request_factory = RequestFactory()
+        self.profile = ProfileFactory()
 
-    # views
-    def test_anon_views(self):
+    def test_public_views(self):
         """Test public views while not logged in"""
-        # pylint: disable=bad-whitespace
-
-        get_allowed(self.client,
-            reverse('acct-profile', args=['adam']),
-            ['profile/account.html', 'base_profile.html'])
-        get_allowed(self.client,
-            reverse('acct-login'),
-            ['forms/account/login.html', 'forms/base_form.html'])
-        get_allowed(self.client,
-            reverse('acct-register'),
-            ['forms/account/register.html', 'forms/base_form.html'])
-        get_allowed(self.client,
-            reverse('acct-register-free'),
-            ['forms/account/register.html', 'forms/base_form.html'])
-        get_allowed(self.client,
-            reverse('acct-register-pro'),
-            ['forms/account/subscription.html'])
-        get_allowed(self.client,
-            reverse('acct-reset-pw'),
-            ['forms/account/pw_reset_part1.html', 'forms/base_form.html'])
-        get_allowed(self.client,
-            reverse('acct-logout'),
-            ['front_page.html'])
+        response = http_get_response(reverse('acct-login'), login)
+        eq_(response.status_code, 200, 'Login page should be publicly visible.')
+        # account overview page
+        response = http_get_response(reverse('accounts'), accounts_views.AccountsView.as_view())
+        eq_(response.status_code, 200, 'Top level accounts page should be publicly visible.')
+        # profile page
+        request = self.request_factory.get(self.profile.get_absolute_url())
+        request = mock_middleware(request)
+        request.user = AnonymousUser()
+        response = accounts_views.profile(request, self.profile.user.username)
+        eq_(response.status_code, 200, 'User profiles should be publicly visible.')
 
     def test_unallowed_views(self):
-        """Test private views while not logged in"""
-
-        # get/post authenticated pages while unauthenticated
-        url_names = ['acct-my-profile', 'acct-update', 'acct-change-pw',
-                     'acct-buy-requests']
-        for url_name in url_names:
-            get_post_unallowed(self.client, reverse(url_name))
-
-    def test_login_view(self):
-        """Test the login view"""
-
-        # bad user name
-        post_allowed_bad(self.client, reverse('acct-login'),
-                         ['forms/account/login.html', 'forms/base_form.html'],
-                         data={'username': 'nouser', 'password': 'abc'})
-        # bad pw
-        post_allowed_bad(self.client, reverse('acct-login'),
-                         ['forms/account/login.html', 'forms/base_form.html'],
-                         data={'username': 'adam', 'password': 'bad pw'})
-        # succesful login
-        post_allowed(self.client, reverse('acct-login'),
-                     {'username': 'adam', 'password': 'abc'},
-                     reverse('acct-my-profile'))
-
-        # get authenticated pages
-        get_allowed(self.client, reverse('acct-my-profile'),
-                    ['profile/account.html', 'base_profile.html'])
+        """Private URLs should redirect logged-out users to the log in page"""
+        def test_get_post(url, view, data):
+            """Performs both a GET and a POST on the same url and view."""
+            get_response = http_get_response(url, view)
+            post_response = http_post_response(url, view, data)
+            return (get_response, post_response)
+        # my profile
+        get, post = test_get_post(reverse('acct-my-profile'), accounts_views.profile, {})
+        eq_(get.status_code, 302, 'My profile link reponds with 302 to logged out user.')
+        eq_(post.status_code, 302, 'POST to my profile link responds with 302.')
+        # settings
+        get, post = test_get_post(reverse('acct-settings'), accounts_views.settings, {})
+        eq_(get.status_code, 302, 'GET /profile responds with 302 to logged out user.')
+        eq_(post.status_code, 302, 'POST /settings reponds with 302 to logged out user.')
+        # buy requests
+        buy_requests_url = reverse('acct-buy-requests', args=['test'])
+        get, post = test_get_post(buy_requests_url, accounts_views.buy_requests, {})
+        eq_(get.status_code, 302,
+            'GET /profile/*/buy_requests/ responds with 302 to logged out user.')
+        eq_(post.status_code, 302,
+            'POST /profile/*/buy_requests/ responds with 302 to logged out user.')
 
     def test_auth_views(self):
         """Test private views while logged in"""
-        # pylint: disable=bad-whitespace
+        user = self.profile.user
+        # my profile
+        response = http_get_response(reverse('acct-my-profile'), accounts_views.profile, user)
+        eq_(response.status_code, 200, 'Logged in user may view their own profile.')
+        # settings
+        response = http_get_response(reverse('acct-settings'), accounts_views.settings, user)
+        eq_(response.status_code, 200)
+        # buy requests
+        buy_requests_url = reverse('acct-buy-requests', args=[user.username])
+        response = http_get_response(buy_requests_url, accounts_views.buy_requests, user)
+        eq_(response.status_code, 302, 'Buying requests should respond with a redirect')
 
-        self.client.login(username='adam', password='abc')
-
-        # get authenticated pages
-        get_allowed(self.client,
-            reverse('acct-my-profile'),
-            ['profile/account.html', 'base_profile.html'])
-        get_allowed(self.client,
-            reverse('acct-update'),
-            ['forms/account/update.html', 'forms/base_form.html'])
-        get_allowed(self.client,
-            reverse('acct-change-pw'),
-            ['forms/account/pw_change.html', 'forms/base_form.html'])
-        get_allowed(self.client,
-            reverse('acct-buy-requests'),
-            ['profile/account.html', 'base_profile.html'])
-
-    def _test_post_view_helper(self, url, templates, data,
-                               redirect_url='acct-my-profile', username='adam', password='abc'):
-        """Helper for logging in, posting to a view, then checking the results"""
-        # pylint: disable=too-many-arguments
-
-        self.client.login(username=username, password=password)
-        post_allowed_bad(self.client, reverse(url), templates)
-        post_allowed(self.client, reverse(url), data,
-                     reverse(redirect_url))
-
-    def test_update_view(self):
-        """Test the account update view"""
-        # pylint: disable=bad-whitespace
-
-        user = User.objects.get(username='adam')
-        user_data = {'first_name': 'mitchell',        'last_name': 'kotler',
-                     'email': 'mitch@muckrock.com',   'user': user,
-                     'address1': '123 main st',       'address2': '',
-                     'city': 'boston', 'state': 'MA', 'zip_code': '02140',
-                     'phone': '555-123-4567',         'email_pref': 'instant'}
-
-        self._test_post_view_helper(
-            'acct-update',
-            ['forms/account/update.html', 'forms/base_form.html'],
-            user_data)
-
-        user = User.objects.get(username='adam')
-        profile = user.profile
+    def test_settings_view(self):
+        """Test the account settings view"""
+        user = self.profile.user
+        user_data = {
+            # USER DATA
+            'first_name': 'mitchell',
+            'last_name': 'kotler',
+            'email': 'mitch@muckrock.com',
+            # PROFILE DATA
+            'user': user,
+            'address1': '123 main st',
+            'address2': '',
+            'city': 'boston',
+            'state': 'MA',
+            'zip_code': '02140',
+            'phone': '555-123-4567',
+            'email_pref': 'instant'
+        }
+        settings_url = reverse('acct-settings')
+        http_post_response(settings_url, accounts_views.settings, user_data, user)
+        self.profile.refresh_from_db()
         for key, val in user_data.iteritems():
             if key in ['first_name', 'last_name', 'email']:
-                nose.tools.eq_(val, getattr(user, key))
-            if key not in ['user', 'first_name', 'last_name', 'email']:
-                nose.tools.eq_(val, getattr(profile, key))
-
-    def test_change_pw_view(self):
-        """Test the change pw view"""
-        self._test_post_view_helper(
-            'acct-change-pw',
-            ['forms/account/pw_change.html', 'forms/base_form.html'],
-            {'old_password': 'abc',
-             'new_password1': '123',
-             'new_password2': '123'},
-            redirect_url='acct-change-pw-done')
-        self.client.logout()
-        nose.tools.assert_false(self.client.login(username='adam', password='abc'))
-        nose.tools.assert_true(self.client.login(username='adam', password='123'))
-
-    def test_logout_view(self):
-        """Test the logout view"""
-        self.client.login(username='adam', password='abc')
-        # logout & check
-        get_allowed(self.client, reverse('acct-logout'),
-                    ['front_page.html'])
-        get_post_unallowed(self.client, reverse('acct-my-profile'))
+                eq_(val, getattr(user, key))
+            else:
+                eq_(val, getattr(self.profile, key))
 
 
 class TestStripeWebhook(TestCase):
@@ -389,14 +500,14 @@ class TestStripeWebhook(TestCase):
     def test_post_request(self):
         """Only POST requests should be allowed."""
         get_request = self.request_factory.get(self.url)
-        response = stripe_webhook(get_request)
+        response = accounts_views.stripe_webhook(get_request)
         eq_(response.status_code, 405, 'Should respond to GET request with 405')
         post_request = self.request_factory.post(
             self.url,
             data=self.data,
             content_type='application/json'
         )
-        response = stripe_webhook(post_request)
+        response = accounts_views.stripe_webhook(post_request)
         eq_(response.status_code, 200, 'Should respond to POST request with 200')
 
     def test_bad_json(self):
@@ -406,7 +517,7 @@ class TestStripeWebhook(TestCase):
             data=u'Not JSON',
             content_type='application/json'
         )
-        response = stripe_webhook(post_request)
+        response = accounts_views.stripe_webhook(post_request)
         eq_(response.status_code, 400)
 
     def test_missing_data(self):
@@ -417,7 +528,7 @@ class TestStripeWebhook(TestCase):
             data=bad_data,
             content_type='application/json'
         )
-        response = stripe_webhook(post_request)
+        response = accounts_views.stripe_webhook(post_request)
         eq_(response.status_code, 400)
 
     @patch('muckrock.message.tasks.send_charge_receipt.delay')
@@ -429,7 +540,7 @@ class TestStripeWebhook(TestCase):
             data=json.dumps(self.mock_event),
             content_type='application/json'
         )
-        response = stripe_webhook(post_request)
+        response = accounts_views.stripe_webhook(post_request)
         eq_(response.status_code, 200)
         mock_task.called_once()
 
@@ -441,7 +552,7 @@ class TestStripeWebhook(TestCase):
             self.url,
             data=json.dumps(self.mock_event),
             content_type='application/json')
-        response = stripe_webhook(post_request)
+        response = accounts_views.stripe_webhook(post_request)
         eq_(response.status_code, 200)
         mock_task.called_once()
 
@@ -454,6 +565,6 @@ class TestStripeWebhook(TestCase):
             data=json.dumps(self.mock_event),
             content_type='application/json'
         )
-        response = stripe_webhook(post_request)
+        response = accounts_views.stripe_webhook(post_request)
         eq_(response.status_code, 200)
         mock_task.called_once()

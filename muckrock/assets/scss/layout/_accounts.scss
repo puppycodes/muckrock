@@ -1,0 +1,106 @@
+.account.plans {
+    header {
+        @include display(flex);
+        @include justify-content(space-between);
+        @include flex-direction(column);
+        @include media($large-layout) {
+            @include flex-direction(row);
+        }
+        p {
+            max-width: 20em;
+        }
+    }
+    main {
+        @include display(flex);
+        &.hidden {
+            display: none;
+        }
+        @include flex-direction(column);
+        @include align-items(center);
+        @media all and (min-width: 768px) {
+            @include flex-direction(row);
+            @include align-items(stretch);
+            @include justify-content(space-around);
+        }
+    }
+    .plan {
+        @include flex(1);
+        @include display(flex);
+        @include flex-direction(column);
+        @include justify-content(space-between);
+        @include border;
+        @include border-radius;
+        max-width: 40em;
+        padding: $vertical-rhythm;
+        background: #fff;
+        h2 {
+            text-align: center;
+        }
+        button {
+            width: 100%;
+        }
+        @media all and (min-width: 768px) {
+            margin-bottom: 0;
+            margin-right: $vertical-rhythm;
+            &:last-child {
+                margin-right: 0;
+            }
+        }
+    }
+    .current-plan {
+        color: $color-green;
+        border: 2px solid;
+        @include border-radius;
+        padding: $vertical-rhythm/4;
+        font-weight: $font-weight-bold;
+        text-align: center;
+    }
+}
+
+.account.signup {
+    .form {
+        margin-bottom: 0;
+        .fields {
+            @include display(flex);
+            @include flex-wrap(wrap);
+            .field {
+                @include flex(1 0 100%);
+            }
+            .errorlist {
+                list-style: none;
+                margin-bottom: 0;
+                padding-left: 0;
+            }
+            @include media($medium-layout) {
+                .field {
+                    @include flex(1 0 50%);
+                    &:nth-child(odd) {
+                        padding-right: $vertical-rhythm;
+                    }
+                    &:last-child {
+                        padding-right: 0;
+                    }
+                }
+            }
+            input {
+                width: 100%;
+            }
+        }
+        footer {
+            @include display(flex);
+            @include justify-content(space-between);
+            @include align-items(center);
+        }
+
+    }
+    .cancel {
+        cursor: pointer;
+        color: $color-blue;
+        border-bottom: 1px dotted;
+        &:hover {
+            text-decoration: none;
+            color: $color-blue-dark;
+            border-bottom-style: solid;
+        }
+    }
+}

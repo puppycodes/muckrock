@@ -34,8 +34,8 @@ options = EmailOptions()
 
 ACCT_TYPES = [
     ('admin', 'Admin'),
+    ('basic', 'Basic'),
     ('beta', 'Beta'),
-    ('community', 'Community'),
     ('pro', 'Professional'),
     ('proxy', 'Proxy'),
     ('robot', 'Robot'),
@@ -141,7 +141,7 @@ class Profile(models.Model):
     def get_absolute_url(self):
         """The url for this object"""
         # pylint: disable=no-member
-        return ('acct-profile', [], {'user_name': self.user.username})
+        return ('acct-profile', [], {'username': self.user.username})
 
     def is_member_of(self, organization):
         """Answers whether the profile is a member of the passed organization"""
@@ -259,15 +259,21 @@ class Profile(models.Model):
 
     def cancel_pro_subscription(self):
         """Unsubscribe this profile from a professional plan. Return the cancelled subscription."""
-        if not self.subscription_id:
-            raise AttributeError('There is no subscription to cancel.')
         customer = self.customer()
-        subscription = customer.subscriptions.retrieve(self.subscription_id)
+        # subscription reference either exists as a saved field or inside the Stripe customer
+        # if it isn't, then they probably don't have a subscription
+        if not self.subscription_id and not len(customer.subscriptions.data) > 0:
+            raise AttributeError('There is no subscription to cancel.')
+        if self.subscription_id:
+            subscription_id = self.subscription_id
+        else:
+            subscription_id = customer.subscriptions.data[0].id
+        subscription = customer.subscriptions.retrieve(subscription_id)
         subscription = subscription.delete()
         customer = customer.save()
         self.subscription_id = ''
-        self.acct_type = 'community'
-        self.monthly_requests = settings.MONTHLY_REQUESTS.get('community', 0)
+        self.acct_type = 'basic'
+        self.monthly_requests = settings.MONTHLY_REQUESTS.get('basic', 0)
         self.save()
         return subscription
 
@@ -433,7 +439,7 @@ class Statistics(models.Model):
     pro_user_names = models.TextField(blank=True)
     total_page_views = models.IntegerField(null=True, blank=True)
     daily_requests_pro = models.IntegerField(null=True, blank=True)
-    daily_requests_community = models.IntegerField(null=True, blank=True)
+    daily_requests_basic = models.IntegerField(null=True, blank=True)
     daily_requests_beta = models.IntegerField(null=True, blank=True)
     daily_articles = models.IntegerField(null=True, blank=True)
 

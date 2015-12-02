@@ -8,11 +8,15 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.core.urlresolvers import reverse
 from django.core.mail import send_mail
-from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotAllowed
+from django.http import HttpResponse,\
+                        HttpResponseBadRequest,\
+                        HttpResponseNotAllowed,\
+                        HttpResponseRedirect
 from django.shortcuts import render_to_response, get_object_or_404, redirect
 from django.template import RequestContext
 from django.template.loader import render_to_string
 from django.views.decorators.csrf import csrf_exempt
+from django.views.generic import TemplateView, FormView
 
 from datetime import date
 from rest_framework import viewsets
@@ -22,22 +26,197 @@ import logging
 import stripe
 import sys
 
-from muckrock.accounts.forms import UserChangeForm, RegisterForm
+from muckrock.accounts.forms import UserChangeForm, RegisterForm, RegisterOrganizationForm
 from muckrock.accounts.models import Profile, Statistics
 from muckrock.accounts.serializers import UserSerializer, StatisticsSerializer
 from muckrock.foia.models import FOIARequest
 from muckrock.organization.models import Organization
-from muckrock.message.tasks import send_charge_receipt, send_invoice_receipt, failed_payment
+from muckrock.message.tasks import send_charge_receipt,\
+                                   send_invoice_receipt,\
+                                   failed_payment,\
+                                   welcome
 from muckrock.settings import STRIPE_SECRET_KEY, STRIPE_PUB_KEY
 
 logger = logging.getLogger(__name__)
 stripe.api_key = STRIPE_SECRET_KEY
+
+def create_new_user(request, valid_form):
+    """Create a user from the valid form, give them a profile, and log them in."""
+    new_user = valid_form.save()
+    Profile.objects.create(
+        user=new_user,
+        acct_type='basic',
+        monthly_requests=0,
+        date_update=date.today()
+    )
+    new_user = authenticate(
+        username=valid_form.cleaned_data['username'],
+        password=valid_form.cleaned_data['password1']
+    )
+    login(request, new_user)
+    return new_user
 
 def account_logout(request):
     """Logs a user out of their account and redirects to index page"""
     logout(request)
     messages.success(request, 'You have successfully logged out.')
     return redirect('index')
+
+
+class SignupView(FormView):
+    """Generic ancestor for all account signup views."""
+    def dispatch(self, *args, **kwargs):
+        """Prevent logged-in users from accessing this view."""
+        if self.request.user.is_authenticated():
+            messages.warning(self.request, 'Log out before signing up for another account.')
+            return HttpResponseRedirect(self.get_success_url())
+        return super(SignupView, self).dispatch(*args, **kwargs)
+
+    def get_success_url(self):
+        """Allows the success URL to be overridden by a query parameter."""
+        url_redirect = self.request.GET.get('next', None)
+        return url_redirect if url_redirect else reverse('acct-my-profile')
+
+
+class BasicSignupView(SignupView):
+    """Allows a logged-out user to register for a basic account."""
+    template_name = 'accounts/signup/basic.html'
+    form_class = RegisterForm
+
+    def form_valid(self, form):
+        """When form is valid, create the user."""
+        new_user = create_new_user(self.request, form)
+        welcome.delay(new_user)
+        success_msg = 'Your account was successfully created. Welcome to MuckRock!'
+        messages.success(self.request, success_msg)
+        return super(BasicSignupView, self).form_valid(form)
+
+
+class ProfessionalSignupView(SignupView):
+    """Allows a logged-out user to register for a professional account."""
+    template_name = 'accounts/signup/professional.html'
+    form_class = RegisterForm
+
+    def get_context_data(self, **kwargs):
+        """Adds Stripe PK to template context data."""
+        context = super(ProfessionalSignupView, self).get_context_data(**kwargs)
+        context['stripe_pk'] = STRIPE_PUB_KEY
+        return context
+
+    def form_valid(self, form):
+        """When form is valid, create the user and begin their professional subscription."""
+        new_user = create_new_user(self.request, form)
+        welcome.delay(new_user)
+        try:
+            new_user.profile.start_pro_subscription(self.request.POST['stripe_token'])
+            success_msg = 'Your professional account was successfully created. Welcome to MuckRock!'
+            messages.success(self.request, success_msg)
+        except KeyError:
+            # no payment information provided
+            error_msg = ('Your account was successfully created, '
+                         'but you did not provide payment information. '
+                         'You can subscribe from the account management page.')
+            messages.error(self.request, error_msg)
+        except stripe.error.CardError:
+            # card declined
+            error_msg = ('Your account was successfully created, but your card was declined. '
+                         'You can subscribe from the account management page.')
+            messages.error(self.request, error_msg)
+        except (stripe.error.InvalidRequestError, stripe.error.APIError):
+            # invalid request made to stripe
+            error_msg = ('Your account was successfully created, '
+                         'but we could not contact our payment provider. '
+                         'You can subscribe from the account management page.')
+            messages.error(self.request, error_msg)
+        return super(ProfessionalSignupView, self).form_valid(form)
+
+
+class OrganizationSignupView(SignupView):
+    """Allows a logged-out user to register for an account and an organization."""
+    template_name = 'accounts/signup/organization.html'
+    form_class = RegisterOrganizationForm
+
+    def form_valid(self, form):
+        """
+        When form is valid, create the user and the organization.
+        Then redirect to the organization activation page.
+        """
+        new_user = create_new_user(self.request, form)
+        new_org = form.create_organization(new_user)
+        welcome.delay(new_user)
+        messages.success(self.request, 'Your account and organization were successfully created.')
+        return HttpResponseRedirect(reverse('org-activate', kwargs={'slug': new_org.slug}))
+
+
+class AccountsView(TemplateView):
+    """
+    Displays the list of payment plans.
+    If user is logged out, it lets them register for any plan.
+    If user is logged in, it lets them up- or downgrade their account to any plan.
+    """
+    template_name = 'accounts/plans.html'
+
+    def get_context_data(self, **kwargs):
+        """Returns a context based on whether the user is logged in or logged out."""
+        context = super(AccountsView, self).get_context_data(**kwargs)
+        logged_in = self.request.user.is_authenticated()
+        if logged_in:
+            context['acct_type'] = self.request.user.profile.acct_type
+            context['email'] = self.request.user.email
+            try:
+                context['org'] = Organization.objects.get(owner=self.request.user)
+            except Organization.DoesNotExist:
+                context['org'] = None
+        context['stripe_pk'] = STRIPE_PUB_KEY
+        context['logged_in'] = logged_in
+        return context
+
+    def post(self, request, **kwargs):
+        """Handle upgrades and downgrades of accounts"""
+        try:
+            action = request.POST['action']
+            account_actions = {
+                'downgrade': self.downgrade,
+                'upgrade': self.upgrade
+            }
+            account_actions[action](request)
+        except KeyError as exception:
+            logger.error(exception)
+            messages.error(request, 'No available action was specified.')
+        except AttributeError as exception:
+            logger.error(exception)
+            error_msg = 'You cannot be logged out and modify your account.'
+            messages.error(request, error_msg)
+        except ValueError as exception:
+            logger.error(exception)
+            messages.error(request, exception)
+        return self.render_to_response(self.get_context_data())
+
+    def upgrade(self, request):
+        """Upgrades the user from a Basic to a Professional account."""
+        # pylint:disable=no-self-use
+        if not request.user.is_authenticated():
+            raise AttributeError('Cannot upgrade an anonymous user.')
+        is_pro_user = request.user.profile.acct_type == 'pro'
+        is_org_owner = Organization.objects.filter(owner=request.user).exists()
+        if is_pro_user:
+            raise ValueError('Cannot upgrade this account, it is already Professional.')
+        if is_org_owner:
+            raise ValueError('Cannot upgrade this account, it owns an organization.')
+        token = request.POST.get('stripe_token')
+        if not token:
+            raise ValueError('Cannot upgrade this account, no Stripe token provided.')
+        request.user.profile.start_pro_subscription(token)
+
+    def downgrade(self, request):
+        """Downgrades the user from a Professional to a Basic account."""
+        # pylint:disable=no-self-use
+        if not request.user.is_authenticated():
+            raise AttributeError('Cannot downgrade an anonymous user.')
+        if request.user.profile.acct_type != 'pro':
+            raise ValueError('Cannot downgrade this account, it is not Professional.')
+        request.user.profile.cancel_pro_subscription()
+
 
 def register(request):
     """Register for a community account"""
@@ -82,9 +261,8 @@ def register(request):
     )
 
 @login_required
-def update(request):
+def settings(request):
     """Update a users information"""
-
     if request.method == 'POST':
         user_profile = request.user.profile
         form = UserChangeForm(request.POST, instance=user_profile)
@@ -211,8 +389,9 @@ def subscribe(request):
     )
 
 @login_required
-def buy_requests(request):
+def buy_requests(request, username=None):
     """Buy more requests"""
+    # pylint:disable=unused-argument
     url_redirect = request.GET.get('next', 'acct-my-profile')
     if request.POST.get('stripe_token', False):
         user_profile = request.user.profile
@@ -269,9 +448,11 @@ def verify_email(request):
         messages.warning(request, 'Your email is already confirmed, no need to verify again!')
     return redirect(prof)
 
-def profile(request, user_name=None):
+def profile(request, username=None):
     """View a user's profile"""
-    user = get_object_or_404(User, username=user_name) if user_name else request.user
+    if not username and request.user.is_anonymous():
+        return redirect('acct-login')
+    user = get_object_or_404(User, username=username) if username else request.user
     requests = FOIARequest.objects.get_viewable(request.user).filter(user=user)
     recent_requests = requests.order_by('-date_submitted')[:5]
     recent_completed = requests.filter(status='done').order_by('-date_done')[:5]
