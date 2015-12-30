@@ -1,0 +1,112 @@
+{% extends 'base.html' %}
+
+{% load humanize %}
+{% load markdown_deux_tags %}
+{% load static from staticfiles %}
+{% load thumbnail %}
+
+{% block content %}
+<div class="homepage">
+
+    <section class="requests" style="background-image: url('{% static 'img/homepage.jpg' %}');">
+        <section class="banner">
+            <div class="banner-container">
+                <h2>File, track, and share<br />public records requests</h2>
+                <div class="call-to-action"><a href="{% url 'foia-create' %}" class="primary button">Create a FOIA request</a>&emsp;or <a href="/about/how-we-work/" class="dotted" id="learn-more">learn how it works.</a></div>
+            </div>
+        </section>
+        <section class="achievements">
+            <ul class="stats">
+                <li class="stat">
+                    <div class="value">{{ stats.request_count|intcomma }}</div>
+                    <div class="key">filed request{{ stats.request_count|pluralize }}</div>
+                </li>
+                <li class="stat">
+                    <div class="value">{{ stats.agency_count|intcomma }}</div>
+                    <div class="key">agenc{{ stats.agency_count|pluralize:"y,ies" }}</div>
+                </li>
+                <li class="stat">
+                    <div class="value">{{ stats.completed_count|intcomma }}</div>
+                    <div class="key">fulfilled request{{ stats.completed_count|pluralize }}</div>
+                </li>
+                <li class="stat">
+                    <div class="value">{{ stats.page_count|intcomma }}</div>
+                    <div class="key">released page{{ stats.page_count|pluralize }}</div>
+                </li>
+            </ul>
+        </section>
+    </section>
+    {% if articles %}
+    <section class="news">
+        <!--
+        <header>
+            <h3>Follow our investigative, document-based reporting</h3>
+        </header>
+        -->
+        <div class="articles">
+            {% with lead_article as article %}
+            <div class="lead article">
+                <datetime title="{{article.pub_date|date:'c'}}">{{article.pub_date|date:'F d, Y'}}</datetime>
+                {% if article.image %}<a href="{{article.get_absolute_url}}" title="{{article.title}}" class="article-image"><img src="{% thumbnail article.image 1200x675 %}" /></a>{% endif %}
+                {% if article.projects.exists %}
+                {% with article.projects.first as project %}
+                <dfn class="article-project"><a href="{{project.get_absolute_url}}">{{project.title}}</a></dfn>
+                {% endwith %}
+                {% endif %}
+                <h1><a href="{{ article.get_absolute_url }}" title="{{article.title}}">{{article.title}}</a></h1>
+                {% if article.authors.all %}
+                <div class="article-authors">by
+                    {% for author in article.authors.all %}
+                        <a href="{{ author.profile.get_absolute_url }}" title="{{ author.get_full_name }}">{{ author.get_full_name }}</a>{% if not forloop.last %}, {% endif %}
+                    {% endfor %}
+                </div>
+                {% endif %}
+                {% if article.summary %}<summary>{{article.summary|markdown:"trusted"}}</summary>{% endif %}
+            </div>
+            {% endwith %}
+            <ul class="others nostyle">
+                {% for article in other_articles %}
+                <li class="other article">
+                    <datetime title="{{article.pub_date|date:'c'}}">{{article.pub_date|date:'F d, Y'}}</datetime>
+                    {% if article.image %}<a href="{{article.get_absolute_url}}" title="{{article.title}}" class="article-image"><img src="{% thumbnail article.image 400x300 %}" /></a>{% endif %}
+                    {% if article.projects.exists %}
+                    {% with article.projects.first as project %}
+                    <dfn class="article-project"><a href="{{project.get_absolute_url}}">{{project.title}}</a></dfn>
+                    {% endwith %}
+                    {% endif %}
+                    <h1><a href="{{ article.get_absolute_url }}" title="{{article.title}}">{{article.title}}</a></h1>
+                    <div class="article-metadata">
+                        {% if article.authors.all %}
+                        <div class="article-authors">by
+                            {% for author in article.authors.all %}
+                                <a href="{{ author.profile.get_absolute_url }}" title="{{ author.get_full_name }}">{{ author.get_full_name }}</a>{% if not forloop.last %}, {% endif %}
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+    </section>
+    {% endif %}
+    {% comment %}
+    {% if featured_reqs %}
+    <section class="featured-requests">
+        <ul>
+        {% for foia in featured_reqs %}
+            <li class="request">
+                <h1>{{ foia.title }}</h1>
+                <h2><a href="{% url 'acct-profile' foia.user.username %}">{{ foia.user.get_full_name }}</a> {% if foia.date_done %}made{% else %}is making{% endif %} this request{% if foia.agency %} to <a href="{{ foia.agency.get_absolute_url }}">{{ foia.agency.name }}</a> of {% if foia.jurisdiction.name = 'United States of America' %}the {% endif %}<a href="{{ foia.jurisdiction.get_absolute_url }}">{{ foia.jurisdiction.name }}</a>{% endif %}.{% if foia.parent %} It was inspired by <a href="{{ foia.parent.get_absolute_url }}">this request</a>.{% endif %}</h2>
+                <div class="buttons">
+                    <a href="{% url 'foia-detail' jurisdiction=foia.jurisdiction.slug jidx=foia.jurisdiction.pk idx=foia.id slug=foia.slug %}">View</a>
+                    <a href="{% url 'foia-clone' jurisdiction=foia.jurisdiction.slug jidx=foia.jurisdiction.pk idx=foia.id slug=foia.slug %}">Clone</a>
+                </div>
+            </li>
+        {% endfor %}
+        </ul>
+    </section>
+    {% endif %}
+    {% endcomment %}
+</div>
+{% endblock content %}

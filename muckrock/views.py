@@ -5,7 +5,7 @@ from django.contrib import messages
 from django.contrib.auth.models import User
 from django.core.exceptions import FieldError
 from django.core.paginator import Paginator, InvalidPage
-from django.db.models import Sum
+from django.db.models import Sum, FieldDoesNotExist
 from django.http import HttpResponseServerError, Http404
 from django.shortcuts import render_to_response, get_object_or_404, redirect
 from django.template import RequestContext, Context, loader
@@ -18,7 +18,6 @@ from muckrock.forms import MRFilterForm
 from muckrock.jurisdiction.models import Jurisdiction
 from muckrock.news.models import Article
 
-import logging
 import re
 from haystack.views import SearchView
 
@@ -156,12 +155,20 @@ class MRFilterableListView(ListView):
         """Sorts the list of objects"""
         sort = self.request.GET.get('sort', self.default_sort)
         order = self.request.GET.get('order', self.default_order)
+        # We need to make sure the field to sort by actually exists.
+        # If the field doesn't exist, revert to the default field.
+        # Otherwise, Django will throw a hard-to-catch FieldError.
+        # It's hard to catch because the error isn't raised until
+        # the QuerySet is evaluated. <Insert poop emoji here>
+        try:
+            # pylint:disable=protected-access
+            self.model._meta.get_field_by_name(sort)
+            # pylint:enable=protected-access
+        except FieldDoesNotExist:
+            sort = self.default_sort
         if order != 'asc':
             sort = '-' + sort
-        try:
-            objects = objects.order_by(sort)
-        except FieldError as exception:
-            logging.error(exception)
+        objects = objects.order_by(sort)
         return objects
 
     def get_context_data(self, **kwargs):
@@ -182,7 +189,8 @@ class MRFilterableListView(ListView):
     def get_queryset(self):
         objects = super(MRFilterableListView, self).get_queryset()
         objects = self.filter_list(objects)
-        return self.sort_list(objects)
+        objects = self.sort_list(objects)
+        return objects
 
     def get_paginate_by(self, queryset):
         """Paginates list by the return value"""
@@ -237,29 +245,31 @@ class MRSearchView(SearchView):
             raise Http404("No such page!")
         return (paginator, page)
 
-def front_page(request):
-    """Get all the details needed for the front page"""
+def homepage(request):
+    """Get all the details needed for the homepage"""
     # pylint: disable=unused-variable
-    # pylint: disable=E1103
-
+    # pylint: disable=no-member
     try:
-        articles = Article.objects.get_published()[:1]
+        articles = Article.objects.prefetch_related('projects')\
+                                  .prefetch_related('authors')\
+                                  .get_published()[:3]
+        lead_article = articles[0]
+        other_articles = articles[1:]
     except IndexError:
         # no published articles
         articles = None
-
-    public_reqs = FOIARequest.objects.get_public()
-    featured_reqs = public_reqs.filter(featured=True).order_by('-date_done')[:3]
-
-    num_requests = FOIARequest.objects.exclude(status='started').count()
-    num_completed_requests = FOIARequest.objects.filter(status='done').count()
-    num_denied_requests = FOIARequest.objects.filter(status='rejected').count()
-    num_pages = FOIAFile.objects.aggregate(Sum('pages'))['pages__sum']
-
-    most_viewed_reqs = FOIARequest.objects.order_by('-times_viewed')[:5]
-    overdue_requests = FOIARequest.objects.get_overdue().get_public()[:5]
-
-    return render_to_response('front_page.html', locals(),
+        lead_article = None
+        other_articles = None
+    public_requests = FOIARequest.objects.get_public()
+    featured_reqs = public_requests.filter(featured=True).order_by('-date_done')[:3]
+    popular_requests = public_requests.order_by('-times_viewed')[:5]
+    stats = {
+        'request_count': FOIARequest.objects.exclude(status='started').count(),
+        'completed_count': FOIARequest.objects.filter(status__in=['done', 'partial']).count(),
+        'page_count': FOIAFile.objects.aggregate(Sum('pages'))['pages__sum'],
+        'agency_count': Agency.objects.get_approved().count()
+    }
+    return render_to_response('homepage.html', locals(),
                               context_instance=RequestContext(request))
 
 def blog(request, path=''):
