@@ -38,7 +38,7 @@ class FOIARequestQuerySet(models.QuerySet):
 
     def get_done(self):
         """Get all FOIA requests with responses"""
-        return self.filter(status='done').exclude(date_done=None)
+        return self.filter(status__in=['partial', 'done']).exclude(date_done=None)
 
     def get_editable(self):
         """Get all editable FOIA requests"""
@@ -605,6 +605,7 @@ class FOIARequest(models.Model):
         # update communication
         comm.set_raw_email(msg.message())
         comm.delivered = 'fax' if self.email.endswith('faxaway.com') else 'email'
+        comm.subject = subject
         comm.save()
 
         # unblock incoming messages if we send one out

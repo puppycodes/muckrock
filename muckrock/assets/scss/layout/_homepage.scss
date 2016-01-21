@@ -4,211 +4,176 @@
     @include flex-wrap(wrap);
     @include align-items(center);
     @include justify-content(center);
-    margin-bottom: 0;
-    padding: 2*$vertical-rhythm $vertical-rhythm;
     color: $color-white;
 
-    a:hover
+    h2
     {
-        color: $color-blue-light;
+        font-size: $font-size-5;
     }
 
     .about
     {
         @include flex(3 1 500px);
-        text-align: center;
-        h1
-        {
-            margin: 0 auto $vertical-rhythm;
-            max-width: 15em;
-            font-weight: $font-weight-bold;
-        }
     }
 
     .info
     {
         @include flex(1 1 200px);
         max-width: 20em;
-        padding: $vertical-rhythm $vertical-rhythm 0 $vertical-rhythm;
+        font-size: $font-size-2;
+    }
+
+    &.foia
+    {
+
+        background-size: cover;
+        background-position: right bottom;
+        padding: $vertical-rhythm;
         @include border;
-        background-color: rgba(0,0,0,.4);
-    }
-}
+        border-color: $color-red-dark;
 
-.foia .banner
-{
-    background-size: cover;
-    background-position: right bottom;
-    background-color: rgba(0, 0, 0, .4);
-    background-blend-mode: multiply;
-
-    .stats
-    {
-        @include display(flex);
-        @include flex-wrap(wrap);
-        @include justify-content(space-around);
-        list-style: none;
-        padding-left: 0;
-    }
-
-    .stat
-    {
-        @include flex(50%);
-        width: 7em;
-        margin: 0 0 $vertical-rhythm 0;
-        text-align: center;
-        .value
+        h2
         {
+            margin: 0 auto $vertical-rhythm;
+            max-width: 11em;
             font-size: $font-size-5;
-            margin-bottom: $vertical-rhythm/2;
+            font-weight: $font-weight-bold;
         }
-        .key
+        a
         {
-            font-size: $font-size-2;
-            line-height: 1em;
+            color: $color-white;
+            font-weight: $font-weight-bold;
+            border-bottom: 1px dotted;
         }
-    }
+        a:hover
+        {
+            color: $color-red-light;
+            text-decoration: none;
+            border-bottom: 1px solid;
+        }
+        .info
+        {
+            padding: $vertical-rhythm $vertical-rhythm 0 $vertical-rhythm;
+            @include border;
+            background-color: rgba(0,0,0,.4);
+        }
+        .stats
+        {
+            @include display(flex);
+            @include flex-wrap(wrap);
+            @include justify-content(space-around);
+            list-style: none;
+            padding-left: 0;
+        }
 
-    .about
-    {
-        .button
+        .stat
         {
-            display: inline-block;
-            @include media($small-layout)
+            @include flex(50%);
+            width: 7em;
+            margin: 0 0 $vertical-rhythm 0;
+            text-align: center;
+            .value
             {
-                display: block;
-                max-width: 20em;
-                margin: 0 auto $vertical-rhythm;
+                font-size: $font-size-5;
+                margin-bottom: $vertical-rhythm/2;
+            }
+            .key
+            {
+                line-height: 1em;
             }
         }
-        #learn-more
+
+        .about
         {
-            display: inline-block;
-            margin-left: $vertical-rhythm/4;
+            text-align: center;
+            .button
+            {
+                display: inline-block;
+                @include media($small-layout)
+                {
+                    display: block;
+                    max-width: 20em;
+                    margin: 0 auto $vertical-rhythm;
+                }
+            }
+            #learn-more
+            {
+                display: inline-block;
+                margin-left: $vertical-rhythm/4;
+            }
         }
     }
-}
-
-.news .banner
-{
-    background-size: cover;
-    background-position: right bottom;
-    background-color: darken($color-blue-dark, 10%);
-    background-blend-mode: multiply;
-
-    .icon
+    &.mission
     {
-        vertical-align: middle;
-        margin-right: $vertical-rhythm;
-        path, rect
+        @include justify-content(space-between);
+        margin: 0 $vertical-rhythm $vertical-rhythm;
+        padding: 0;
+        color: $color-black;
+        h1
         {
-            fill: $color-blue;
+            max-width: 21em;
+            margin-right: $vertical-rhythm;
+            font-size: $font-size-6;
+            font-weight: $font-weight-bold;
         }
-        &.email path
-        {
-            fill: none;
-            stroke: $color-blue;
-        }
-    }
-    .channel
-    {
-        margin-bottom: $vertical-rhythm/2;
-        font-size: $font-size-2;
     }
 }
 
 .homepage
 {
-    overflow: hidden;
-    margin: 0 -.5 * $vertical-rhythm;
-    margin-bottom: 0;
-    section
-    {
-        margin-bottom: 0;
-    }
-    @include media($medium-layout)
-    {
-        margin: 0 -1 * $vertical-rhythm;
-    }
-    @include media($large-layout)
-    {
-        margin: 0 -24px 0 -1 * $vertical-rhythm;
-    }
-    h3
+    h2
     {
         font-size: $font-size-4;
         font-weight: $font-weight-bold;
     }
-    .mission
+    main
     {
-        padding: 0 $vertical-rhythm;
-        h1
+        margin-bottom: 0;
+        @include display(flex);
+        @include flex-wrap(wrap);
+        .news
         {
-            max-width: 23em;
-            font-size: $font-size-6;
-            font-weight: $font-weight-bold;
+            @include flex(2 1 400px);
+            h2
+            {
+                margin: 0 $vertical-rhythm $vertical-rhythm;
+            }
+            .articles
+            {
+                @include display(flex);
+                @include flex-wrap(wrap);
+            }
+            .article
+            {
+                margin: 0 $vertical-rhythm $vertical-rhythm;
+            }
+            .lead.article
+            {
+                @include flex(0 1 100%);
+            }
+            .other.article
+            {
+                @include flex(1 1 275px);
+            }
         }
-    }
-    .foia
-    {
         .requests
         {
-            @include display(flex);
-            @include flex-wrap(wrap);
-            @include justify-content(space-around);
-        }
-        .featured
-        {
-            @include flex(3 1 400px);
-            margin-bottom: 0;
-            padding: $vertical-rhythm;
-            .foia-info
-            {
-                font-size: $font-size-3;
-            }
-            .title
-            {
-                font-size: $font-size-5;
-            }
-        }
-        .completed
-        {
             @include flex(1 1 200px);
-            padding: $vertical-rhythm;
+            margin: 0 $vertical-rhythm $vertical-rhythm;
         }
     }
     .news
     {
-        background: $color-white;
-        h3
-        {
-            padding: $vertical-rhythm;
-            margin-bottom: 0;
-        }
         .articles
         {
-            @include display(flex);
-            @include flex-wrap(wrap);
-            @include justify-content(space-around);
             margin-bottom: 0;
-        }
-        .lead
-        {
-            flex: 3 1 400px;
-            margin-bottom: 0;
-            padding: 0 $vertical-rhythm;
-        }
-        .others
-        {
-            flex: 1 1 200px;
-            padding: 0 $vertical-rhythm;
         }
         .article
         {
-            background: $color-white;
+            margin: 0 0 $vertical-rhythm 0;
             h1
             {
-                margin-bottom: 0;
+                margin-bottom: $vertical-rhythm/4;
                 font-size: $font-size-6;
                 font-weight: $font-weight-bold;
                 line-height: 1.2em;
@@ -239,6 +204,13 @@
                     color: $color-grey-3;
                 }
             }
+            .article-metadata
+            {
+                @include display(flex);
+                @include justify-content(space-between);
+                margin-bottom: $vertical-rhythm/4;
+                line-height: 1em;
+            }
             .article-project a
             {
                 color: $color-grey-3;
@@ -246,65 +218,79 @@
         }
         .other.article
         {
-            margin-bottom: $vertical-rhythm;
             h1
             {
-                font-size: $font-size-4;
-                margin-bottom: 0;
+                font-size: $font-size-3;
+            }
+            summary
+            {
+                font-size: $font-size-2;
+                line-height: $font-line-height;
             }
         }
-        .project-list
+
+    }
+    .project-list
+    {
+        border: none;
+    }
+    .project-item
+    {
+        margin: 0 $vertical-rhythm $vertical-rhythm;
+        &:hover
         {
-            @include display(flex);
-            @include flex-wrap(wrap);
-            padding-right: $vertical-rhythm;
-            border: none;
+            background-color: lighten($color-blue-dark, 5%);
         }
-        .project-item
+        transition: background-color .25s linear;
+        a
         {
-            @include flex(1 1 13em);
-            @include border;
-            height: 23em;
-            max-width: 19em;
-            margin: 0 0 $vertical-rhythm $vertical-rhythm;
-            background-blend-mode: overlay;
-            background-color: $color-blue-dark;
-            border-color: $color-blue-dark;
-            position: relative;
-            a
+            display: block;
+            height: 100%;
+            width: 100%;
+            background-color: rgba(0,0,0,.5);
+            transition: background-color .25s linear;
+            &:hover
             {
-                display: block;
-                height: 100%;
-                width: 100%;
-                &:hover h4
-                {
-                    text-decoration: underline;
-                }
-            }
-            .project-info
-            {
-                background: none;
+                text-decoration: none;
                 color: $color-white;
-                position: absolute;
-                bottom: 0;
-                &:hover h4
-                {
-                    color: $color-white;
-                }
+                h4 { text-decoration: underline; }
+                background-color: rgba(0,0,0,.25);
             }
-            h4
+        }
+        .project-info
+        {
+            background: none;
+            color: $color-white;
+            bottom: 0;
+            &:hover h4
             {
-                font-weight: $font-weight-bold;
+                color: $color-white;
             }
-            .summary
-            {
-                max-width: 30em;
-            }
+        }
+        h4, .summary
+        {
+            max-width: 24rem;
+            font-weight: $font-weight-bold;
         }
     }
 }
 
-.website-footer
+/* This knocks out the margin applied by the parent container */
+.homepage
 {
-    margin-top: 0;
+    overflow: hidden;
+    margin: 0 -.5 * $vertical-rhythm;
+    margin-bottom: 0;
+    section
+    {
+        margin-bottom: 0;
+    }
+    @include media($medium-layout)
+    {
+        margin: 0 -1 * $vertical-rhythm;
+    }
+    @include media($large-layout)
+    {
+        margin: 0 -24px 0 -1 * $vertical-rhythm;
+    }
 }

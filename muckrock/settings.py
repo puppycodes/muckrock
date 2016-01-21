@@ -236,6 +236,7 @@ INSTALLED_APPS = (
     'taggit',
     'django_xmlrpc',
     'lot',
+    'package_monitor',
     'muckrock.accounts',
     'muckrock.foia',
     'muckrock.news',
@@ -512,6 +513,7 @@ DATABASES['default'] = {
     'PASSWORD': url.password,
     'HOST': url.hostname,
     'PORT': url.port,
+    'CONN_MAX_AGE': os.environ.get('CONN_MAX_AGE', 500),
 }
 
 # test runner seems to want this...
@@ -592,6 +594,10 @@ LOT = {
   },
 }
 LOT_MIDDLEWARE_PARAM_NAME = 'uuid-login'
+
+ROBOTS_CACHE_TIMEOUT = 60 * 60 * 24
+
+PACKAGE_MONITOR_REQUIREMENTS_FILE = os.path.join(SITE_ROOT, '../requirements.txt')
 
 # Organization Settings
 
