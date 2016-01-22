@@ -19,6 +19,8 @@ from muckrock.jurisdiction.models import Jurisdiction
 
 def generate_status_actions(foia, comm, status):
     """Generate activity stream actions for agency replies"""
+    if not foia.agency:
+        return
     # generate action
     actstream.action.send(
         foia.agency,
@@ -47,6 +49,11 @@ def generate_status_actions(foia, comm, status):
             verb='partially completed',
             action_object=foia
         )
+    elif status == 'fix':
+        actstream.action.send(foia, verb='requires fix')
+    elif status == 'payment':
+        actstream.action.send(foia, verb='requires payment')
+    return
 
 class TaskQuerySet(models.QuerySet):
     """Object manager for all tasks"""
@@ -60,22 +67,17 @@ class TaskQuerySet(models.QuerySet):
 
     def filter_by_foia(self, foia):
         """Get all tasks that relate to the provided FOIA request."""
-        # pylint:disable=line-too-long
-        # I disabled pylint line length checking here because it's like 4 characters and
-        # I think that shortening these lines would reduce the overall legibility.
+        # pylint:disable=no-self-use
         tasks = []
         # infer foia from communication
-        tasks += [task.responsetask for task in self.filter(responsetask__communication__foia=foia)]
-        tasks += [task.snailmailtask for task in self.filter(snailmailtask__communication__foia=foia)]
-        tasks += [task.failedfaxtask for task in self.filter(failedfaxtask__communication__foia=foia)]
+        for task_type in (ResponseTask, SnailMailTask, FailedFaxTask):
+            tasks += list(task_type.objects.filter(communication__foia=foia))
         # these tasks have a direct foia attribute
-        tasks += [task.rejectedemailtask for task in self.filter(rejectedemailtask__foia=foia)]
-        tasks += [task.flaggedtask for task in self.filter(flaggedtask__foia=foia)]
-        tasks += [task.statuschangetask for task in self.filter(statuschangetask__foia=foia)]
-        tasks += [task.paymenttask for task in self.filter(paymenttask__foia=foia)]
+        for task_type in (RejectedEmailTask, FlaggedTask, StatusChangeTask, PaymentTask):
+            tasks += list(task_type.objects.filter(foia=foia))
         # try matching foia agency with task agency
         if foia.agency:
-            tasks += [task.newagencytask for task in self.filter(newagencytask__agency=foia.agency)]
+            tasks += list(NewAgencyTask.objects.filter(agency=foia.agency))
         return tasks
 
 
@@ -90,7 +92,7 @@ class Task(models.Model):
     """A base task model for fields common to all tasks"""
     date_created = models.DateTimeField(auto_now_add=True)
     date_done = models.DateTimeField(blank=True, null=True)
-    resolved = models.BooleanField(default=False)
+    resolved = models.BooleanField(default=False, db_index=True)
     assigned = models.ForeignKey(User, blank=True, null=True, related_name="assigned_tasks")
     resolved_by = models.ForeignKey(User, blank=True, null=True, related_name="resolved_tasks")
 
@@ -239,8 +241,8 @@ class StaleAgencyTask(Task):
 
 class FlaggedTask(Task):
     """A user has flagged a request, agency or jurisdiction"""
-    user = models.ForeignKey(User)
     text = models.TextField()
+    user = models.ForeignKey(User, blank=True, null=True)
     foia = models.ForeignKey('foia.FOIARequest', blank=True, null=True)
     agency = models.ForeignKey(Agency, blank=True, null=True)
     jurisdiction = models.ForeignKey(Jurisdiction, blank=True, null=True)
@@ -259,11 +261,11 @@ class NewAgencyTask(Task):
 
     def pending_requests(self):
         """Returns the requests to be acted on"""
-        return FOIARequest.objects.filter(agency=self.agency)
+        return FOIARequest.objects.filter(agency=self.agency).exclude(status='started')
 
     def approve(self):
         """Approves agency, resends pending requests, and resolves"""
-        self.agency.approved = True
+        self.agency.status = 'approved'
         self.agency.save()
         # resend the first comm of each foia associated to this agency
         for foia in self.pending_requests():
@@ -274,6 +276,8 @@ class NewAgencyTask(Task):
 
     def reject(self, replacement_agency):
         """Resends pending requests to replacement agency and resolves"""
+        self.agency.status = 'rejected'
+        self.agency.save()
         for foia in self.pending_requests():
             # first switch foia to use replacement agency
             foia.agency = replacement_agency
@@ -341,6 +345,14 @@ class ResponseTask(Task):
         foia = comm.foia
         foia.price = price
         foia.save()
+
+    def set_date_estimate(self, date_estimate):
+        """Sets the estimated completion date of the communication's request."""
+        foia = self.communication.foia
+        foia.date_estimate = date_estimate
+        foia.update()
+        foia.save()
+        logging.info('Estimated completion date set to %s', date_estimate)
 
 
 class FailedFaxTask(Task):

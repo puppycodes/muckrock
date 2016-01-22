@@ -25,9 +25,13 @@ class ProjectQuerySet(models.QuerySet):
     def get_visible(self, user):
         """Only return projects which the user is permitted to see"""
         projects = self.all()
-        if not user.is_staff:
+        if not user.is_authenticated():
+            # show public projects only
+            projects = projects.get_public()
+        elif not user.is_staff:
             # show public projects and projects the user is a contributor to
             projects = projects.filter(models.Q(private=False)|models.Q(contributors=user))
+            projects = projects.distinct()
         return projects
 
 class Project(models.Model):
@@ -47,6 +51,9 @@ class Project(models.Model):
     private = models.BooleanField(
         default=False,
         help_text='If a project is private, it is only visible to its contributors.')
+    featured = models.BooleanField(
+        default=False,
+        help_text='Featured projects will appear on the homepage.')
     contributors = models.ManyToManyField(
         'auth.User',
         related_name='projects',

@@ -2,13 +2,16 @@
 Views for muckrock project
 """
 from django.contrib import messages
+from django.contrib.auth.decorators import user_passes_test
 from django.contrib.auth.models import User
+from django.core.cache import cache
+from django.core.cache.utils import make_template_fragment_key
 from django.core.exceptions import FieldError
 from django.core.paginator import Paginator, InvalidPage
-from django.db.models import Sum
-from django.http import HttpResponseServerError, Http404
+from django.db.models import Sum, FieldDoesNotExist
+from django.http import Http404
 from django.shortcuts import render_to_response, get_object_or_404, redirect
-from django.template import RequestContext, Context, loader
+from django.template import RequestContext
 from django.utils.decorators import method_decorator
 from django.views.generic.list import ListView
 
@@ -17,6 +20,8 @@ from muckrock.foia.models import FOIARequest, FOIAFile
 from muckrock.forms import MRFilterForm
 from muckrock.jurisdiction.models import Jurisdiction
 from muckrock.news.models import Article
+from muckrock.project.models import Project
+from muckrock.utils import cache_get_or_set
 
 import re
 from haystack.views import SearchView
@@ -34,6 +39,8 @@ class MRFilterableListView(ListView):
 
     title = ''
     template_name = 'lists/base_list.html'
+    default_sort = 'title'
+    default_order = 'asc'
 
     def get_filters(self):
         """
@@ -139,9 +146,13 @@ class MRFilterableListView(ListView):
             filter_value = self.clean_filter_value(filter_key, filter_value)
             if filter_value:
                 kwargs.update({'{0}__{1}'.format(filter_key, filter_lookup): filter_value})
-        # tag filtering could add duplicate items to results, so .distinct() is used
+        # tag filtering could add duplicate items to results, so .distinct()
+        # is used only if there are tags, as adding distinct can cause
+        # performance issues
+        if get.get('tags'):
+            objects = objects.distinct()
         try:
-            objects = objects.filter(**kwargs).distinct()
+            objects = objects.filter(**kwargs)
         except FieldError:
             pass
         except ValueError:
@@ -151,13 +162,22 @@ class MRFilterableListView(ListView):
 
     def sort_list(self, objects):
         """Sorts the list of objects"""
-        get = self.request.GET
-        sort = get.get('sort')
-        if sort in ['title', 'status', 'date_submitted']:
-            order = get.get('order', 'asc')
-            if order != 'asc':
-                sort = '-' + sort
-            objects = objects.order_by(sort)
+        sort = self.request.GET.get('sort', self.default_sort)
+        order = self.request.GET.get('order', self.default_order)
+        # We need to make sure the field to sort by actually exists.
+        # If the field doesn't exist, revert to the default field.
+        # Otherwise, Django will throw a hard-to-catch FieldError.
+        # It's hard to catch because the error isn't raised until
+        # the QuerySet is evaluated. <Insert poop emoji here>
+        try:
+            # pylint:disable=protected-access
+            self.get_model()._meta.get_field_by_name(sort)
+            # pylint:enable=protected-access
+        except FieldDoesNotExist:
+            sort = self.default_sort
+        if order != 'asc':
+            sort = '-' + sort
+        objects = objects.order_by(sort)
         return objects
 
     def get_context_data(self, **kwargs):
@@ -171,16 +191,30 @@ class MRFilterableListView(ListView):
         except ValueError:
             context['filter_form'] = MRFilterForm()
         context['filter_url'] = filter_data['filter_url']
+        context['active_sort'] = self.request.GET.get('sort', self.default_sort)
+        context['active_order'] = self.request.GET.get('order', self.default_order)
         return context
 
     def get_queryset(self):
         objects = super(MRFilterableListView, self).get_queryset()
+        objects = self.filter_list(objects)
         objects = self.sort_list(objects)
-        return self.filter_list(objects)
+        return objects
 
     def get_paginate_by(self, queryset):
         """Paginates list by the return value"""
-        return min(self.request.GET.get('per_page', 25), 100)
+        try:
+            per_page = int(self.request.GET.get('per_page'))
+            return max(min(per_page, 100), 5)
+        except (ValueError, TypeError):
+            return 25
+
+    def get_model(self):
+        """Get the model for this view - directly or from the queryset"""
+        if self.queryset is not None:
+            return self.queryset.model
+        if self.model is not None:
+            return self.model
 
 
 class MRSearchView(SearchView):
@@ -198,7 +232,11 @@ class MRSearchView(SearchView):
 
     def get_paginate_by(self):
         """Gets per_page the right way"""
-        return int(self.request.GET.get('per_page', 25))
+        try:
+            per_page = int(self.request.GET.get('per_page'))
+            return max(min(per_page, 100), 5)
+        except (ValueError, TypeError):
+            return 25
 
     def build_page(self):
         """Circumvents the hard-coded haystack per page value."""
@@ -223,35 +261,91 @@ class MRSearchView(SearchView):
             raise Http404("No such page!")
         return (paginator, page)
 
-def front_page(request):
-    """Get all the details needed for the front page"""
+def homepage(request):
+    """Get all the details needed for the homepage"""
     # pylint: disable=unused-variable
-    # pylint: disable=E1103
-
+    # pylint: disable=no-member
+    articles = cache_get_or_set(
+            'hp:articles',
+            lambda: Article.objects.get_published()
+                                   .prefetch_related(
+                                        'authors',
+                                        'authors__profile',
+                                        'projects',
+                                    )
+                                   [:3],
+            600)
     try:
-        articles = Article.objects.get_published()[:1]
+        lead_article = articles[0]
+        other_articles = articles[1:]
     except IndexError:
         # no published articles
-        articles = None
-
-    public_reqs = FOIARequest.objects.get_public()
-    featured_reqs = public_reqs.filter(featured=True).order_by('-date_done')[:3]
-
-    num_requests = FOIARequest.objects.exclude(status='started').count()
-    num_completed_requests = FOIARequest.objects.filter(status='done').count()
-    num_denied_requests = FOIARequest.objects.filter(status='rejected').count()
-    num_pages = FOIAFile.objects.aggregate(Sum('pages'))['pages__sum']
-
-    most_viewed_reqs = FOIARequest.objects.order_by('-times_viewed')[:5]
-    overdue_requests = FOIARequest.objects.get_overdue().get_public()[:5]
-
-    return render_to_response('front_page.html', locals(),
+        lead_article = None
+        other_articles = None
+    featured_projects = cache_get_or_set(
+            'hp:featured_projects',
+            lambda: Project.objects.get_public().filter(featured=True)[:4],
+            600)
+    federal_government = cache_get_or_set(
+            'hp:federal_government',
+            lambda: Jurisdiction.objects.filter(level='f').first(),
+            None)
+    completed_requests = cache_get_or_set(
+            'hp:completed_requests',
+            lambda: FOIARequest.objects.get_public().get_done()
+                               .order_by('-date_done')
+                               .select_related_view()
+                               .prefetch_related('files')[:6],
+            600)
+    stats = cache_get_or_set(
+            'hp:stats',
+            lambda: {
+                'request_count': FOIARequest.objects
+                    .exclude(status='started').count(),
+                'completed_count': FOIARequest.objects.get_done().count(),
+                'page_count': FOIAFile.objects
+                    .aggregate(Sum('pages'))['pages__sum'],
+                'agency_count': Agency.objects.get_approved().count()
+            },
+            600)
+    return render_to_response('homepage.html', locals(),
                               context_instance=RequestContext(request))
 
-def blog(request, path=''):
-    """Redirect to the new blog URL"""
+@user_passes_test(lambda u: u.is_staff)
+def reset_homepage_cache(request):
+    """Reset the homepage cache"""
     # pylint: disable=unused-argument
-    return redirect('http://blog.muckrock.com/%s/' % path, permanant=True)
+    key = make_template_fragment_key('homepage')
+    cache.delete(key)
+    cache.set('hp:articles',
+            Article.objects.get_published().prefetch_related(
+                'authors',
+                'authors__profile',
+                'projects')[:3],
+            600)
+    cache.set('hp:featured_projects',
+            Project.objects.get_public().filter(featured=True)[:4],
+            600)
+    cache.set('hp:federal_government',
+            Jurisdiction.objects.filter(level='f').first(),
+            None)
+    cache.set('hp:completed_requests',
+            FOIARequest.objects.get_public().get_done()
+                               .order_by('-date_done')
+                               .select_related_view()
+                               .prefetch_related('files')[:6],
+            600)
+    cache.set('hp:stats',
+            {
+                'request_count': FOIARequest.objects
+                    .exclude(status='started').count(),
+                'completed_count': FOIARequest.objects.get_done().count(),
+                'page_count': FOIAFile.objects
+                    .aggregate(Sum('pages'))['pages__sum'],
+                'agency_count': Agency.objects.get_approved().count()
+            },
+            600)
+    return redirect('index')
 
 def jurisdiction(request, jurisdiction=None, slug=None, idx=None, view=None):
     """Redirect to the jurisdiction page"""
@@ -270,15 +364,14 @@ def jurisdiction(request, jurisdiction=None, slug=None, idx=None, view=None):
 
 def handler500(request):
     """
-    500 error handler which includes ``request`` in the context.
+    500 error handler which includes request in the context.
 
     Templates: `500.html`
     Context: None
     """
-
-    template = loader.get_template('500.html')
-    return HttpResponseServerError(template.render(Context({'request': request})))
-
+    response = render_to_response('500.html', {}, context_instance=RequestContext(request))
+    response.status_code = 500
+    return response
 
 # http://stackoverflow.com/a/8429311
 def class_view_decorator(function_decorator):

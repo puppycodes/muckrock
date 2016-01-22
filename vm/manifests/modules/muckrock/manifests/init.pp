@@ -66,6 +66,14 @@ class muckrock {
 		ensure => installed,
 	}
 
+	package { 'awscli':
+		ensure => installed,
+	}
+
+	package { 'graphviz':
+		ensure => installed,
+	}
+
 	# python
 
 	class { 'python':
@@ -120,4 +128,8 @@ class muckrock {
 	# redis
 
 	class { 'redis':; }
+
+	# heroku
+
+	class { 'heroku':; }
 }

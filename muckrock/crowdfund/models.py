@@ -2,8 +2,9 @@
 Models for the crowdfund application
 """
 
-from django.contrib.auth.models import User, AnonymousUser
+from django.contrib.auth.models import User
 from django.db import models
+from django.db.models import Q
 
 import actstream
 from datetime import date
@@ -13,6 +14,8 @@ import stripe
 
 from muckrock.foia.models import FOIARequest
 from muckrock import task
+
+stripe.api_version = '2015-10-16'
 
 class CrowdfundABC(models.Model):
     """Abstract base class for crowdfunding objects"""
@@ -68,27 +71,23 @@ class CrowdfundABC(models.Model):
         actstream.action.send(self, verb='ended')
         return
 
-    def contributors(self):
-        """Return a list of all the contributors to a crowdfund"""
-        contributors = []
-        payments = self.payments.all()
-        for payment in payments:
-            if payment.show and payment.user:
-                contributors.append(payment.user)
-            else:
-                contributors.append(AnonymousUser())
-        logging.debug(payments)
-        logging.debug(contributors)
-        return contributors
+    def contributors_count(self):
+        """Return a count of all the contributors to a crowdfund"""
+        return self.payments.count()
 
-    def anonymous_contributors(self):
-        """Return anonymous contributors only."""
-        return [x for x in self.contributors() if x.is_anonymous()]
+    def anonymous_contributors_count(self):
+        """Return a count of anonymous contributors"""
+        return self.payments.filter(Q(show=False) | Q(user=None)).count()
 
     def named_contributors(self):
         """Return unique named contributors only."""
         # returns the list of a set of a list to remove duplicates
-        return list(set([x for x in self.contributors() if not x.is_anonymous()]))
+        payment_name = self.get_crowdfund_payment_object().__name__.lower()
+        params = {
+                payment_name + '__crowdfund': self,
+                payment_name + '__show': True,
+                }
+        return User.objects.filter(**params).distinct()
 
     def get_crowdfund_payment_object(self):
         """Return the crowdfund payment object. Should be implemented by subclasses."""
@@ -100,38 +99,35 @@ class CrowdfundABC(models.Model):
         # pylint:disable=no-self-use
         raise NotImplementedError
 
-    def make_payment(self, token, amount, show=False, user=None):
+    def make_payment(self, token, email, amount, show=False, user=None):
         """Creates a payment for the crowdfund"""
+        # pylint: disable=too-many-arguments
         amount = Decimal(amount)
         if self.payment_capped and amount > self.amount_remaining():
             amount = self.amount_remaining()
         # Try processing the payment using Stripe.
-        # If the payment fails, raise an error.
-        stripe_exceptions = (
-            stripe.InvalidRequestError,
-            stripe.CardError,
-            stripe.APIConnectionError,
-            stripe.AuthenticationError
+        # If the payment fails, do not catch the error.
+        # Stripe represents currency as smallest-unit integers.
+        stripe_amount = int(float(amount) * 100)
+        charge = stripe.Charge.create(
+            amount=stripe_amount,
+            source=token,
+            currency='usd',
+            metadata={
+                'email': email,
+                'action': 'crowdfund-payment',
+                'crowdfund_id': self.id,
+                'crowdfund_name': self.name
+            }
         )
-        try:
-            # Stripe represents currency as integers
-            stripe_amount = int(float(amount) * 100)
-            stripe.Charge.create(
-                amount=stripe_amount,
-                source=token,
-                currency='usd',
-                description='Crowdfund contribution: %s' % self,
-            )
-        except stripe_exceptions as payment_error:
-            raise payment_error
         payment_object = self.get_crowdfund_payment_object()
         payment = payment_object.objects.create(
             amount=amount,
             crowdfund=self,
             user=user,
-            show=show
+            show=show,
+            charge_id=charge.id
         )
-        payment.save()
         logging.info(payment)
         self.update_payment_received()
         return payment
@@ -144,12 +140,14 @@ class CrowdfundPaymentABC(models.Model):
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     date = models.DateTimeField(auto_now_add=True)
     show = models.BooleanField(default=False)
+    charge_id = models.CharField(max_length=255, blank=True)
 
     class Meta:
         abstract = True
 
 class CrowdfundRequest(CrowdfundABC):
     """Keep track of crowdfunding for a request"""
+    type_ = 'foia'
     foia = models.OneToOneField(FOIARequest, related_name='crowdfund')
 
     def __unicode__(self):
@@ -178,6 +176,7 @@ class CrowdfundRequestPayment(CrowdfundPaymentABC):
 
 class CrowdfundProject(CrowdfundABC):
     """A crowdfunding campaign for a project."""
+    type_ = 'project'
     project = models.ForeignKey('project.Project', related_name='crowdfund')
 
     def __unicode__(self):

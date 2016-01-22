@@ -36,6 +36,8 @@ if not DEBUG and os.environ.get('ENV') != 'staging':
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_SECURE = True
 
+SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
+
 DOGSLOW = True
 DOGSLOW_LOG_TO_FILE = False
 DOGSLOW_TIMER = 25
@@ -163,14 +165,15 @@ MIDDLEWARE_CLASSES = (
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'lot.middleware.LOTMiddleware',
+    'muckrock.middleware.RemoveTokenMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
+    'debug_toolbar.middleware.DebugToolbarMiddleware',
     'django.contrib.flatpages.middleware.FlatpageFallbackMiddleware',
     'reversion.middleware.RevisionMiddleware',
 )
-MIDDLEWARE_CLASSES += ('debug_toolbar.middleware.DebugToolbarMiddleware',)
 if DEBUG:
     MIDDLEWARE_CLASSES += ('muckrock.settings.ExceptionLoggingMiddleware',)
-    MIDDLEWARE_CLASSES += ('muckrock.middleware.ProfileMiddleware',)
+    MIDDLEWARE_CLASSES += ('yet_another_django_profiler.middleware.ProfilerMiddleware',)
 
 class ExceptionLoggingMiddleware(object):
     """Log exceptions to command line
@@ -235,6 +238,7 @@ INSTALLED_APPS = (
     'taggit',
     'django_xmlrpc',
     'lot',
+    'package_monitor',
     'muckrock.accounts',
     'muckrock.foia',
     'muckrock.news',
@@ -247,6 +251,7 @@ INSTALLED_APPS = (
     'muckrock.crowdfund',
     'muckrock.sidebar',
     'muckrock.task',
+    'muckrock.message',
     'muckrock.organization',
     'muckrock.project',
     'muckrock.mailgun',
@@ -301,10 +306,10 @@ AUTHENTICATION_BACKENDS = (
     'lot.auth_backend.LOTBackend',
     )
 ABSOLUTE_URL_OVERRIDES = {
-    'auth.user': lambda u: reverse('acct-profile', kwargs={'user_name': u.username}),
+    'auth.user': lambda u: reverse('acct-profile', kwargs={'username': u.username}),
 }
 
-DBSETTINGS_USE_SITES = False
+DBSETTINGS_USE_SITES = True
 
 if DEBUG:
     TEST_RUNNER = 'django_nose.NoseTestSuiteRunner'
@@ -347,11 +352,22 @@ ASSETS_DEBUG = False
 
 MONTHLY_REQUESTS = {
     'admin': 20,
+    'basic': 0,
     'beta': 5,
-    'community': 0,
     'pro': 20,
     'proxy': 20,
-    'org': 200,
+    'org': 50,
+    'robot': 0,
+}
+
+BUNDLED_REQUESTS = {
+    'admin': 5,
+    'basic': 4,
+    'beta': 4,
+    'pro': 5,
+    'proxy': 5,
+    'org': 5,
+    'robot': 0,
 }
 
 MARKDOWN_DEUX_STYLES = {
@@ -499,6 +515,7 @@ DATABASES['default'] = {
     'PASSWORD': url.password,
     'HOST': url.hostname,
     'PORT': url.port,
+    'CONN_MAX_AGE': os.environ.get('CONN_MAX_AGE', 500),
 }
 
 # test runner seems to want this...
@@ -522,16 +539,53 @@ if 'PG_USER' in os.environ:
 
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
     }
 }
 
+if TEST:
+    CACHES['default']['BACKEND'] = 'django.core.cache.backends.dummy.DummyCache'
+
 if 'MEMCACHIER_SERVERS' in os.environ:
-    CACHES['default']['BACKEND'] = 'django.core.cache.backends.memcached.MemcachedCache'
-    server = os.environ.get('MEMCACHIER_SERVERS')
-    if not server.endswith(':11211'):
-        server += ':11211'
-    CACHES['default']['LOCATION'] = server
+    os.environ['MEMCACHE_SERVERS'] = os.environ.get('MEMCACHIER_SERVERS', '').replace(',', ';')
+    os.environ['MEMCACHE_USERNAME'] = os.environ.get('MEMCACHIER_USERNAME', '')
+    os.environ['MEMCACHE_PASSWORD'] = os.environ.get('MEMCACHIER_PASSWORD', '')
+
+    CACHES = {
+        'default': {
+            # Use pylibmc
+            'BACKEND': 'django_pylibmc.memcached.PyLibMCCache',
+
+            # Use binary memcache protocol (needed for authentication)
+            'BINARY': True,
+
+            # TIMEOUT is not the connection timeout! It's the default expiration
+            # timeout that should be applied to keys! Setting it to `None`
+            # disables expiration.
+            'TIMEOUT': None,
+
+            'OPTIONS': {
+                # Enable faster IO
+                'no_block': True,
+                'tcp_nodelay': True,
+
+                # Keep connection alive
+                'tcp_keepalive': True,
+
+                # Timeout for set/get requests
+                '_poll_timeout': 2000,
+
+                # Use consistent hashing for failover
+                'ketama': True,
+
+                # Configure failover timings
+                'connect_timeout': 2000,
+                'remove_failed': 4,
+                'retry_timeout': 2,
+                'dead_timeout': 10
+            }
+        }
+    }
 
 
 REST_FRAMEWORK = {
@@ -562,6 +616,10 @@ FILER_STORAGES = {
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '').split(',')
 
+ACTSTREAM_SETTINGS = {
+    'MANAGER': 'muckrock.managers.MRActionManager'
+}
+
 SOUTH_MIGRATION_MODULES = {
     'taggit': 'taggit.south_migrations',
     'easy_thumbnails': 'easy_thumbnails.south_migrations',
@@ -575,6 +633,16 @@ LOT = {
   },
 }
 LOT_MIDDLEWARE_PARAM_NAME = 'uuid-login'
+
+ROBOTS_CACHE_TIMEOUT = 60 * 60 * 24
+
+PACKAGE_MONITOR_REQUIREMENTS_FILE = os.path.join(SITE_ROOT, '../requirements.txt')
+
+# Organization Settings
+
+ORG_MIN_SEATS = 3
+ORG_PRICE_PER_SEAT = 2000
+ORG_REQUESTS_PER_SEAT = 10
 
 # pylint: disable=wildcard-import
 # pylint: disable=unused-wildcard-import

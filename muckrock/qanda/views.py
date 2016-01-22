@@ -5,7 +5,7 @@ Views for the QandA application
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.urlresolvers import reverse
-from django.db.models import Count
+from django.db.models import Count, Prefetch
 from django.shortcuts import render_to_response, get_object_or_404, redirect
 from django.template import RequestContext
 from django.template.defaultfilters import slugify
@@ -29,6 +29,12 @@ class QuestionList(MRFilterableListView):
     model = Question
     title = 'Questions & Answers'
     template_name = 'lists/question_list.html'
+
+    def get_queryset(self):
+        """Hides hidden jurisdictions from list"""
+        objects = super(QuestionList, self).get_queryset()
+        objects = objects.select_related('user').prefetch_related('answers')
+        return objects
 
     def get_context_data(self, **kwargs):
         """Adds an info message to the context"""
@@ -106,13 +112,10 @@ class Detail(DetailView):
 
     def get_context_data(self, **kwargs):
         context = super(Detail, self).get_context_data(**kwargs)
-        user = self.request.user
-        if user.is_authenticated() and actstream.actions.is_following(user, self.get_object()):
-            context['follow_label'] = 'Unfollow'
-        else:
-            context['follow_label'] = 'Follow'
         context['sidebar_admin_url'] = reverse('admin:qanda_question_change',
             args=(context['object'].pk,))
+        context['answers'] = context['object'].answers.select_related('user')
+        context['answer_users'] = set(a.user for a in context['answers'])
         return context
 
 
@@ -191,7 +194,10 @@ class QuestionViewSet(viewsets.ModelViewSet):
     # pylint: disable=too-many-public-methods
     # pylint: disable=C0103
     # pylint: disable=too-many-ancestors
-    queryset = Question.objects.all()
+    queryset = (Question.objects.select_related('user')
+            .prefetch_related('tags',
+                Prefetch('answers',
+                    queryset=Answer.objects.select_related('user'))))
     serializer_class = QuestionSerializer
     permission_classes = (QuestionPermissions,)
     filter_fields = ('title', 'foia',)
