@@ -36,6 +36,8 @@ if not DEBUG and os.environ.get('ENV') != 'staging':
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_SECURE = True
 
+SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
+
 DOGSLOW = True
 DOGSLOW_LOG_TO_FILE = False
 DOGSLOW_TIMER = 25
@@ -133,6 +135,17 @@ STATICFILES_FINDERS = (
 AWS_QUERYSTRING_AUTH = False
 AWS_S3_SECURE_URLS = True
 AWS_S3_FILE_OVERWRITE = False
+AWS_HEADERS = {
+ 'Expires': 'Thu, 31 Dec 2099 20:00:00 GMT',
+ 'Cache-Control': 'max-age=94608000',
+}
+AWS_IS_GZIPPED = True
+GZIP_CONTENT_TYPES = (
+ 'text/css',
+ 'application/javascript',
+ 'application/x-javascript',
+ 'text/javascript'
+)
 
 if not DEBUG:
     # List of callables that know how to import templates from various sources.
@@ -165,13 +178,13 @@ MIDDLEWARE_CLASSES = (
     'lot.middleware.LOTMiddleware',
     'muckrock.middleware.RemoveTokenMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
+    'debug_toolbar.middleware.DebugToolbarMiddleware',
     'django.contrib.flatpages.middleware.FlatpageFallbackMiddleware',
     'reversion.middleware.RevisionMiddleware',
 )
-MIDDLEWARE_CLASSES += ('debug_toolbar.middleware.DebugToolbarMiddleware',)
 if DEBUG:
     MIDDLEWARE_CLASSES += ('muckrock.settings.ExceptionLoggingMiddleware',)
-    MIDDLEWARE_CLASSES += ('muckrock.middleware.ProfileMiddleware',)
+    MIDDLEWARE_CLASSES += ('yet_another_django_profiler.middleware.ProfilerMiddleware',)
 
 class ExceptionLoggingMiddleware(object):
     """Log exceptions to command line
@@ -537,16 +550,53 @@ if 'PG_USER' in os.environ:
 
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
     }
 }
 
+if TEST:
+    CACHES['default']['BACKEND'] = 'django.core.cache.backends.dummy.DummyCache'
+
 if 'MEMCACHIER_SERVERS' in os.environ:
-    CACHES['default']['BACKEND'] = 'django.core.cache.backends.memcached.MemcachedCache'
-    server = os.environ.get('MEMCACHIER_SERVERS')
-    if not server.endswith(':11211'):
-        server += ':11211'
-    CACHES['default']['LOCATION'] = server
+    os.environ['MEMCACHE_SERVERS'] = os.environ.get('MEMCACHIER_SERVERS', '').replace(',', ';')
+    os.environ['MEMCACHE_USERNAME'] = os.environ.get('MEMCACHIER_USERNAME', '')
+    os.environ['MEMCACHE_PASSWORD'] = os.environ.get('MEMCACHIER_PASSWORD', '')
+
+    CACHES = {
+        'default': {
+            # Use pylibmc
+            'BACKEND': 'django_pylibmc.memcached.PyLibMCCache',
+
+            # Use binary memcache protocol (needed for authentication)
+            'BINARY': True,
+
+            # TIMEOUT is not the connection timeout! It's the default expiration
+            # timeout that should be applied to keys! Setting it to `None`
+            # disables expiration.
+            'TIMEOUT': None,
+
+            'OPTIONS': {
+                # Enable faster IO
+                'no_block': True,
+                'tcp_nodelay': True,
+
+                # Keep connection alive
+                'tcp_keepalive': True,
+
+                # Timeout for set/get requests
+                '_poll_timeout': 2000,
+
+                # Use consistent hashing for failover
+                'ketama': True,
+
+                # Configure failover timings
+                'connect_timeout': 2000,
+                'remove_failed': 4,
+                'retry_timeout': 2,
+                'dead_timeout': 10
+            }
+        }
+    }
 
 
 REST_FRAMEWORK = {
