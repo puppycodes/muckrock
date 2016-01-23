@@ -110,7 +110,11 @@ if not DEBUG:
     THUMBNAIL_DEFAULT_STORAGE = 'storages.backends.s3boto.S3BotoStorage'
     STATICFILES_STORAGE = 'muckrock.storage.CachedS3BotoStorage'
     COMPRESS_STORAGE = STATICFILES_STORAGE
-    STATIC_URL = 'https://' + BUCKET_NAME + '.s3.amazonaws.com/'
+    AWS_S3_CUSTOM_DOMAIN = os.environ.get('CLOUDFRONT_DOMAIN')
+    if AWS_S3_CUSTOM_DOMAIN:
+        STATIC_URL = 'https://' + AWS_S3_CUSTOM_DOMAIN + '/'
+    else:
+        STATIC_URL = 'https://' + BUCKET_NAME + '.s3.amazonaws.com/'
     COMPRESS_URL = STATIC_URL
     MEDIA_URL = STATIC_URL + 'media/'
 elif AWS_DEBUG:
@@ -135,6 +139,10 @@ STATICFILES_FINDERS = (
 AWS_QUERYSTRING_AUTH = False
 AWS_S3_SECURE_URLS = True
 AWS_S3_FILE_OVERWRITE = False
+AWS_HEADERS = {
+ 'Expires': 'Thu, 31 Dec 2099 20:00:00 GMT',
+ 'Cache-Control': 'max-age=94608000',
+}
 
 if not DEBUG:
     # List of callables that know how to import templates from various sources.
@@ -217,6 +225,7 @@ INSTALLED_APPS = (
     'compressor',
     'debug_toolbar',
     'django_tablib',
+    'django_premailer',
     'djangosecure',
     'djcelery',
     'easy_thumbnails',
