@@ -15,11 +15,13 @@ import logging
 from muckrock.agency.forms import AgencyForm
 from muckrock.agency.models import Agency
 from muckrock.foia.models import STATUS, FOIARequest, FOIACommunication, FOIAFile
-from muckrock.task.forms import TaskFilterForm, ResponseTaskForm
-from muckrock.task.models import Task, OrphanTask, SnailMailTask, RejectedEmailTask, \
-                                 StaleAgencyTask, FlaggedTask, NewAgencyTask, ResponseTask, \
-                                 PaymentTask, GenericCrowdfundTask, MultiRequestTask, \
-                                 StatusChangeTask, FailedFaxTask
+from muckrock.task.forms import TaskFilterForm, FlaggedTaskForm, ResponseTaskForm
+from muckrock.task.models import (
+        Task, OrphanTask, SnailMailTask, RejectedEmailTask,
+        StaleAgencyTask, FlaggedTask, NewAgencyTask, ResponseTask,
+        PaymentTask, GenericCrowdfundTask, MultiRequestTask,
+        StatusChangeTask, FailedFaxTask
+        )
 from muckrock.views import MRFilterableListView
 
 # pylint:disable=missing-docstring
@@ -87,7 +89,6 @@ class TaskList(MRFilterableListView):
         context['filter_form'] = TaskFilterForm(initial=filter_initial)
         context['counters'] = count_tasks()
         context['bulk_actions'] = self.bulk_actions
-        context['type'] = self.get_model().__name__
         return context
 
     @method_decorator(user_passes_test(lambda u: u.is_staff))
@@ -237,6 +238,18 @@ class FlaggedTaskList(TaskList):
     queryset = FlaggedTask.objects.select_related(
             'user', 'foia', 'agency', 'jurisdiction')
 
+    def task_post_helper(self, request, task):
+        """Special post handler for FlaggedTasks"""
+        if request.POST.get('reply'):
+            reply_form = FlaggedTaskForm(request.POST)
+            if reply_form.is_valid():
+                text = reply_form.cleaned_data['text']
+                task.reply(text)
+            else:
+                messages.error(request, 'The form is invalid')
+                return
+        if request.POST.get('resolve'):
+            task.resolve(request.user)
 
 class NewAgencyTaskList(TaskList):
     title = 'New Agencies'
@@ -291,6 +304,7 @@ class ResponseTaskList(TaskList):
             return
         cleaned_data = form.cleaned_data
         status = cleaned_data['status']
+        set_foia = cleaned_data['set_foia']
         move = cleaned_data['move']
         tracking_number = cleaned_data['tracking_number']
         date_estimate = cleaned_data['date_estimate']
@@ -305,7 +319,7 @@ class ResponseTaskList(TaskList):
                 error_happened = True
         if status:
             try:
-                task.set_status(status)
+                task.set_status(status, set_foia)
             except ValueError:
                 messages.error(request, 'You tried to set the request to an invalid status.')
                 error_happened = True
@@ -374,11 +388,22 @@ class RequestTaskList(TaskList):
     template_name = 'lists/request_task_list.html'
 
     def get_queryset(self):
-        foia_request = get_object_or_404(FOIARequest, pk=self.kwargs['pk'])
-        tasks = Task.objects.filter_by_foia(foia_request)
+        # pylint: disable=attribute-defined-outside-init
+        self.foia_request = get_object_or_404(
+                FOIARequest.objects.select_related(
+                    'agency__jurisdiction',
+                    'jurisdiction__parent__parent',
+                    'user__profile'),
+                pk=self.kwargs['pk'])
+        tasks = Task.objects.filter_by_foia(self.foia_request)
         return tasks
 
     def get_context_data(self, **kwargs):
-        context = super(RequestTaskList, self).get_context_data(**kwargs)
-        context['foia'] = get_object_or_404(FOIARequest, pk=self.kwargs['pk'])
+        # pylint: disable=bad-super-call
+        # we purposely call super on TaskList here, as we do want the generic
+        # list views method to be called, but we don't need any of the
+        # data calculated in the TaskList method, so using it just slows us down
+        context = super(TaskList, self).get_context_data(**kwargs)
+        context['foia'] = self.foia_request
+        context['foia_url'] = self.foia_request.get_absolute_url()
         return context

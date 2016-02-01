@@ -25,16 +25,18 @@ import string
 
 from muckrock.accounts.models import Profile
 from muckrock.agency.models import Agency
-from muckrock.foia.forms import \
-    RequestForm, \
-    RequestDraftForm, \
-    MultiRequestForm, \
-    MultiRequestDraftForm
-from muckrock.foia.models import \
-    FOIARequest, \
-    FOIAMultiRequest, \
-    FOIACommunication, \
-    STATUS
+from muckrock.foia.forms import (
+    RequestForm,
+    RequestDraftForm,
+    MultiRequestForm,
+    MultiRequestDraftForm,
+    )
+from muckrock.foia.models import (
+    FOIARequest,
+    FOIAMultiRequest,
+    FOIACommunication,
+    STATUS,
+    )
 from muckrock.jurisdiction.models import Jurisdiction
 from muckrock.settings import STRIPE_PUB_KEY, MONTHLY_REQUESTS
 from muckrock.task.models import NewAgencyTask, MultiRequestTask
@@ -266,8 +268,11 @@ def create_request(request):
         else:
             form = RequestForm(request=request)
 
-    viewable = FOIARequest.objects.get_viewable(request.user)
-    featured = viewable.filter(featured=True).select_related_view()
+    featured = (FOIARequest.objects
+            .get_viewable(request.user)
+            .filter(featured=True)
+            .select_related_view()
+            .get_public_file_count())
 
     context = {
         'form': form,

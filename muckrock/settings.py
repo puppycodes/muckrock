@@ -100,17 +100,24 @@ COMPRESS_PRECOMPILERS = (
     ('text/x-scss', 'sass --sourcemap=none {infile} {outfile}'),
 )
 
+
 # URL that handles the media served from MEDIA_ROOT. Make sure to use a
 # trailing slash if there is a path component (optional in other cases).
 # Examples: "http://media.lawrence.com", "http://example.com/media/"
 if not DEBUG:
     DEFAULT_BUCKET_NAME = 'muckrock'
     BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME', DEFAULT_BUCKET_NAME)
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto.S3BotoStorage'
+    DEFAULT_FILE_STORAGE = 'image_diet.storage.DietStorage'
+    DIET_STORAGE = 'storages.backends.s3boto.S3BotoStorage'
+    DIET_CONFIG = os.path.join(SITE_ROOT, '../config/image_diet.yaml')
     THUMBNAIL_DEFAULT_STORAGE = 'storages.backends.s3boto.S3BotoStorage'
     STATICFILES_STORAGE = 'muckrock.storage.CachedS3BotoStorage'
     COMPRESS_STORAGE = STATICFILES_STORAGE
-    STATIC_URL = 'https://' + BUCKET_NAME + '.s3.amazonaws.com/'
+    AWS_S3_CUSTOM_DOMAIN = os.environ.get('CLOUDFRONT_DOMAIN')
+    if AWS_S3_CUSTOM_DOMAIN:
+        STATIC_URL = 'https://' + AWS_S3_CUSTOM_DOMAIN + '/'
+    else:
+        STATIC_URL = 'https://' + BUCKET_NAME + '.s3.amazonaws.com/'
     COMPRESS_URL = STATIC_URL
     MEDIA_URL = STATIC_URL + 'media/'
 elif AWS_DEBUG:
@@ -139,13 +146,6 @@ AWS_HEADERS = {
  'Expires': 'Thu, 31 Dec 2099 20:00:00 GMT',
  'Cache-Control': 'max-age=94608000',
 }
-AWS_IS_GZIPPED = True
-GZIP_CONTENT_TYPES = (
- 'text/css',
- 'application/javascript',
- 'application/x-javascript',
- 'text/javascript'
-)
 
 if not DEBUG:
     # List of callables that know how to import templates from various sources.
@@ -251,6 +251,7 @@ INSTALLED_APPS = (
     'django_xmlrpc',
     'lot',
     'package_monitor',
+    'image_diet',
     'muckrock.accounts',
     'muckrock.foia',
     'muckrock.news',
@@ -508,6 +509,8 @@ DOCUMENTCLOUD_PASSWORD = os.environ.get('DOCUMENTCLOUD_PASSWORD')
 GA_USERNAME = os.environ.get('GA_USERNAME')
 GA_PASSWORD = os.environ.get('GA_PASSWORD')
 GA_ID = os.environ.get('GA_ID')
+
+SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL', '')
 
 PUBLICATION_NAME = 'MuckRock'
 
