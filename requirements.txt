@@ -102,13 +102,9 @@ gunicorn==0.14.3
 image-diet2==1.0
 # Interactive python shell
 ipython==0.10
-<<<<<<< HEAD
-kombu==3.0.14
-=======
 # Required by celery
 kombu==3.0.33
 # Required by pylint
->>>>>>> remove-unused
 logilab-common==0.63.2
 # Required by django-adapters and premailer
 lxml==3.1.0
