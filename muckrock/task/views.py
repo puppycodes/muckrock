@@ -15,7 +15,9 @@ import logging
 from muckrock.agency.forms import AgencyForm
 from muckrock.agency.models import Agency
 from muckrock.foia.models import STATUS, FOIARequest, FOIACommunication, FOIAFile
-from muckrock.task.forms import TaskFilterForm, FlaggedTaskForm, ResponseTaskForm
+from muckrock.task.forms import (
+        TaskFilterForm, FlaggedTaskForm, StaleAgencyTaskForm, ResponseTaskForm
+        )
 from muckrock.task.models import (
         Task, OrphanTask, SnailMailTask, RejectedEmailTask,
         StaleAgencyTask, FlaggedTask, NewAgencyTask, ResponseTask,
@@ -223,14 +225,35 @@ class RejectedEmailTaskList(TaskList):
                         email_upper == o.email.upper() or
                         email_upper in o.other_emails.upper()]
             return return_value
-        context['agency_by_email'] = seperate_by_email(agencies, all_emails)
-        context['foia_by_email'] = seperate_by_email(foias, all_emails)
+        agency_by_email = seperate_by_email(agencies, all_emails)
+        foia_by_email = seperate_by_email(foias, all_emails)
+        for task in context['object_list']:
+            task.foias = foia_by_email[task.email]
+            task.agencies = agency_by_email[task.email]
         return context
 
 
 class StaleAgencyTaskList(TaskList):
     title = 'Stale Agencies'
-    queryset = StaleAgencyTask.objects.select_related('agency')
+    queryset = (StaleAgencyTask.objects.select_related('agency').prefetch_related(
+        'agency__foiarequest_set',
+        'agency__foiarequest_set__communications'
+    ))
+
+    def task_post_helper(self, request, task):
+        """Check the new email is valid and, if so, apply it"""
+        if request.POST.get('update'):
+            email_form = StaleAgencyTaskForm(request.POST)
+            if email_form.is_valid():
+                new_email = email_form.cleaned_data['email']
+                foia_pks = request.POST.getlist('foia')
+                foias = FOIARequest.objects.filter(pk__in=foia_pks)
+                task.update_email(new_email, foias)
+            else:
+                messages.error(request, 'The email is invalid.')
+                return
+        if request.POST.get('resolve'):
+            task.resolve(request.user)
 
 
 class FlaggedTaskList(TaskList):
@@ -293,6 +316,7 @@ class ResponseTaskList(TaskList):
                 Prefetch('communication__foia__communications',
                     queryset=FOIACommunication.objects.order_by('-date'),
                     to_attr='reverse_communications'),
+                'communication__foia__communications__files',
                 ))
 
     def task_post_helper(self, request, task):
@@ -395,7 +419,8 @@ class RequestTaskList(TaskList):
                     'jurisdiction__parent__parent',
                     'user__profile'),
                 pk=self.kwargs['pk'])
-        tasks = Task.objects.filter_by_foia(self.foia_request)
+        user = self.request.user
+        tasks = Task.objects.filter_by_foia(self.foia_request, user)
         return tasks
 
     def get_context_data(self, **kwargs):
