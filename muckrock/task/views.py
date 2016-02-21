@@ -21,7 +21,7 @@ from muckrock.task.forms import (
 from muckrock.task.models import (
     Task, OrphanTask, SnailMailTask, RejectedEmailTask,
     StaleAgencyTask, FlaggedTask, NewAgencyTask, ResponseTask,
-    MultiRequestTask, StatusChangeTask, FailedFaxTask, NewCroundfundTask
+    MultiRequestTask, StatusChangeTask, FailedFaxTask, NewCrowdfundTask
     )
 from muckrock.views import MRFilterableListView
 
