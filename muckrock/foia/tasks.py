@@ -1,5 +1,6 @@
 """Celery Tasks for the FOIA application"""
 
+from celery.exceptions import SoftTimeLimitExceeded
 from celery.signals import task_failure
 from celery.schedules import crontab
 from celery.task import periodic_task, task
@@ -27,6 +28,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from django_mailgun import MailgunAPIError
 from scipy.sparse import hstack
+from urllib import quote_plus
 
 from muckrock.foia.models import (
     FOIAFile,
@@ -101,7 +103,7 @@ def upload_document_cloud(doc_pk, change, **kwargs):
         }
     if change:
         params['_method'] = str('put')
-        url = '/documents/%s.json' % doc.doc_id
+        url = '/documents/%s.json' % quote_plus(doc.doc_id.encode('utf-8'))
     else:
         params['file'] = doc.ffile.url.replace('https', 'http', 1)
         url = '/upload.json'
@@ -137,7 +139,9 @@ def set_document_cloud_pages(doc_pk, **kwargs):
         # already has pages set or not a doc cloud, just return
         return
 
-    request = urllib2.Request('https://www.documentcloud.org/api/documents/%s.json' % doc.doc_id)
+    request = urllib2.Request(
+            u'https://www.documentcloud.org/api/documents/%s.json' %
+            quote_plus(doc.doc_id.encode('utf-8')))
     request = authenticate_documentcloud(request)
 
     try:
@@ -182,7 +186,8 @@ def submit_multi_request(req_pk, **kwargs):
             new_foia = FOIARequest.objects.create(
                 user=req.user, status='started', title=title, slug=slugify(title),
                 jurisdiction=agency.jurisdiction, agency=agency, embargo=req.embargo,
-                requested_docs=req.requested_docs, description=req.requested_docs)
+                requested_docs=req.requested_docs, description=req.requested_docs,
+                location=agency.location)
 
             FOIACommunication.objects.create(
                 foia=new_foia, from_who=new_foia.user.get_full_name(),
@@ -199,15 +204,15 @@ def classify_status(task_pk, **kwargs):
 
     def get_text_ocr(doc_id):
         """Get the text OCR from document cloud"""
-        doc_cloud_url = 'http://www.documentcloud.org/api/documents/%s.json'
-        resp = requests.get(doc_cloud_url % doc_id)
+        doc_cloud_url = u'http://www.documentcloud.org/api/documents/%s.json'
+        resp = requests.get(doc_cloud_url % quote_plus(doc_id.encode('utf-8')))
         try:
             doc_cloud_json = resp.json()
         except ValueError:
-            logger.warn('Doc Cloud error for %s: %s', doc_id, resp.content)
+            logger.warn(u'Doc Cloud error for %s: %s', doc_id, resp.content)
             return ''
         if 'error' in doc_cloud_json:
-            logger.warn('Doc Cloud error for %s: %s',
+            logger.warn(u'Doc Cloud error for %s: %s',
                     doc_id, doc_cloud_json['error'])
             return ''
         text_url = doc_cloud_json['document']['resources']['text']
@@ -349,7 +354,12 @@ def retry_stuck_documents():
 class SizeError(Exception):
     """Uploaded file is not the correct size"""
 
-@periodic_task(run_every=crontab(hour=2, minute=0), name='muckrock.foia.tasks.autoimport')
+# Increase the time limit for autoimport to 1 hour, and a soft time limit to
+# 5 minutes before that
+@periodic_task(
+        run_every=crontab(hour=2, minute=0),
+        name='muckrock.foia.tasks.autoimport',
+        time_limit=3600, soft_time_limit=3300)
 def autoimport():
     """Auto import documents from S3"""
     # pylint: disable=broad-except
@@ -362,7 +372,6 @@ def autoimport():
             r'(?: ID#(?P<id>\S+))?'
             r'(?: EST(?P<estm>\d\d?)-(?P<estd>\d\d?)-(?P<esty>\d\d))?'
             , re.I)
-    log = ['Start Time: %s' % datetime.now()]
 
     def s3_copy(bucket, key_or_pre, dest_name):
         """Copy an s3 key or prefix"""
@@ -420,7 +429,7 @@ def autoimport():
         return (foia_pks, file_date, code, title,
                 status, body, arg, id_, est_date)
 
-    def import_key(key, comm, log, title=None):
+    def import_key(key, storage_bucket, comm, log, title=None):
         """Import a key"""
         # pylint: disable=no-member
 
@@ -448,7 +457,7 @@ def autoimport():
 
         upload_document_cloud.apply_async(args=[foia_file.pk, False], countdown=3)
 
-    def import_prefix(prefix, bucket, comm, log):
+    def import_prefix(prefix, bucket, storage_bucket, comm, log):
         """Import a prefix (folder) full of documents"""
 
         for key in bucket.list(prefix=prefix.name, delimiter='/'):
@@ -459,7 +468,7 @@ def autoimport():
                         (key.name, prefix.name))
                 continue
             try:
-                import_key(key, comm, log)
+                import_key(key, storage_bucket, comm, log)
             except SizeError as exc:
                 s3_copy(bucket, key, 'review/%s' % key.name[6:])
                 exc.args[2].delete() # delete the foia file
@@ -467,68 +476,87 @@ def autoimport():
                 log.append('ERROR: %s was %s bytes and after uploaded was %s bytes - retry' %
                            (key.name[6:], exc.args[0], exc.args[1]))
 
-    conn = S3Connection(settings.AWS_ACCESS_KEY_ID, settings.AWS_SECRET_ACCESS_KEY)
-    bucket = conn.get_bucket(settings.AWS_AUTOIMPORT_BUCKET_NAME)
-    storage_bucket = conn.get_bucket(settings.AWS_STORAGE_BUCKET_NAME)
-    for key in bucket.list(prefix='scans/', delimiter='/'):
-        if key.name == 'scans/':
-            continue
-        # strip off 'scans/'
-        file_name = key.name[6:]
+    def process(log):
+        """Process the files"""
+        log.append('Start Time: %s' % datetime.now())
+        conn = S3Connection(settings.AWS_ACCESS_KEY_ID, settings.AWS_SECRET_ACCESS_KEY)
+        bucket = conn.get_bucket(settings.AWS_AUTOIMPORT_BUCKET_NAME)
+        storage_bucket = conn.get_bucket(settings.AWS_STORAGE_BUCKET_NAME)
+        for key in bucket.list(prefix='scans/', delimiter='/'):
+            if key.name == 'scans/':
+                continue
+            # strip off 'scans/'
+            file_name = key.name[6:]
 
-        try:
-            foia_pks, file_date, code, title, status, body, arg, id_, est_date \
-                = parse_name(file_name)
-        except ValueError as exc:
-            s3_copy(bucket, key, 'review/%s' % file_name)
-            s3_delete(bucket, key)
-            log.append(unicode(exc))
-            continue
-
-        for foia_pk in foia_pks:
             try:
-                # pylint: disable=no-member
-                foia = FOIARequest.objects.get(pk=foia_pk)
-                source = foia.agency.name if foia.agency else ''
-
-                comm = FOIACommunication.objects.create(
-                    foia=foia, from_who=source,
-                    to_who=foia.user.get_full_name(), response=True,
-                    date=file_date, full_html=False, delivered='mail',
-                    communication=body, status=status)
-
-                foia.status = status or foia.status
-                if foia.status in ['partial', 'done', 'rejected', 'no_docs']:
-                    foia.date_done = file_date.date()
-                if code == 'FEE' and arg:
-                    foia.price = Decimal(arg)
-                if id_:
-                    foia.tracking_id = id_
-                if est_date:
-                    foia.date_estimate = est_date
-
-                if key.name.endswith('/'):
-                    import_prefix(key, bucket, comm, log)
-                else:
-                    import_key(key, comm, log, title=title)
-
-                foia.save()
-                foia.update(comm.anchor())
-
-            except FOIARequest.DoesNotExist:
+                (foia_pks, file_date, code, title, status,
+                        body, arg, id_, est_date) = parse_name(file_name)
+            except ValueError as exc:
                 s3_copy(bucket, key, 'review/%s' % file_name)
-                log.append('ERROR: %s references FOIA Request %s, but it does not exist' %
-                           (file_name, foia_pk))
-            except Exception as exc:
-                s3_copy(bucket, key, 'review/%s' % file_name)
-                log.append('ERROR: %s has caused an unknown error. %s' % (file_name, exc))
-                logger.error('Autoimport error: %s', exc, exc_info=sys.exc_info())
-        # delete key after processing all requests for it
-        s3_delete(bucket, key)
-    log.append('End Time: %s' % datetime.now())
-    log_msg = '\n'.join(log)
-    send_mail('[AUTOIMPORT] %s Logs' % datetime.now(), log_msg, 'info@muckrock.com',
-              ['requests@muckrock.com'], fail_silently=False)
+                s3_delete(bucket, key)
+                log.append(unicode(exc))
+                continue
+
+            for foia_pk in foia_pks:
+                try:
+                    # pylint: disable=no-member
+                    foia = FOIARequest.objects.get(pk=foia_pk)
+                    source = foia.agency.name if foia.agency else ''
+
+                    comm = FOIACommunication.objects.create(
+                        foia=foia, from_who=source,
+                        to_who=foia.user.get_full_name(), response=True,
+                        date=file_date, full_html=False, delivered='mail',
+                        communication=body, status=status)
+
+                    foia.status = status or foia.status
+                    if foia.status in ['partial', 'done', 'rejected', 'no_docs']:
+                        foia.date_done = file_date.date()
+                    if code == 'FEE' and arg:
+                        foia.price = Decimal(arg)
+                    if id_:
+                        foia.tracking_id = id_
+                    if est_date:
+                        foia.date_estimate = est_date
+
+                    if key.name.endswith('/'):
+                        import_prefix(key, bucket, storage_bucket, comm, log)
+                    else:
+                        import_key(key, storage_bucket, comm, log, title=title)
+
+                    foia.save()
+                    foia.update(comm.anchor())
+
+                except FOIARequest.DoesNotExist:
+                    s3_copy(bucket, key, 'review/%s' % file_name)
+                    log.append('ERROR: %s references FOIA Request %s, but it does not exist' %
+                               (file_name, foia_pk))
+                except SoftTimeLimitExceeded:
+                    # if we reach the soft time limit,
+                    # re-raise so we can catch and clean up
+                    raise
+                except Exception as exc:
+                    s3_copy(bucket, key, 'review/%s' % file_name)
+                    log.append('ERROR: %s has caused an unknown error. %s' % (file_name, exc))
+                    logger.error('Autoimport error: %s', exc, exc_info=sys.exc_info())
+            # delete key after processing all requests for it
+            s3_delete(bucket, key)
+        log.append('End Time: %s' % datetime.now())
+
+    try:
+        log = []
+        process(log)
+    except SoftTimeLimitExceeded:
+        log.append('ERROR: Time limit exceeded, please check folder for '
+                'undeleted uploads.  How big of a file did you put in there?')
+        log.append('End Time: %s' % datetime.now())
+    finally:
+        send_mail(
+                '[AUTOIMPORT] %s Logs' % datetime.now(),
+                '\n'.join(log),
+                'info@muckrock.com',
+                ['info@muckrock.com'],
+                fail_silently=False)
 
 
 @periodic_task(run_every=crontab(hour=3, minute=0), name='muckrock.foia.tasks.notify_unanswered')

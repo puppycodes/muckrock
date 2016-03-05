@@ -7,7 +7,7 @@ from django import forms
 from decimal import Decimal
 from datetime import date, timedelta
 
-from muckrock.crowdfund.models import Crowdfund, CrowdfundPayment
+from muckrock.crowdfund.models import Crowdfund
 
 
 class NumberInput(forms.TextInput):
@@ -18,7 +18,7 @@ class NumberInput(forms.TextInput):
 class CrowdfundForm(forms.ModelForm):
     """Form to confirm enable crowdfunding"""
 
-    fee_rate = Decimal(0.15)
+    fee_rate = 0.15
 
     class Meta:
         model = Crowdfund
@@ -30,7 +30,7 @@ class CrowdfundForm(forms.ModelForm):
             'date_due',
         ]
 
-    payment_required = forms.DecimalField(
+    payment_required = forms.IntegerField(
         label='Amount',
         help_text='We will add 15% to this amount, which goes towards our operating costs.',
         widget=NumberInput()
@@ -56,6 +56,9 @@ class CrowdfundForm(forms.ModelForm):
         if not valid_amount:
             raise forms.ValidationError('Amount to crowdfund must be greater than zero.')
         amount += amount * self.fee_rate
+        # since the amount we get should always be a 1-cent relative integer
+        # (e.g. $1.00 = 100), we should normalize the amount into a decimal value
+        amount = amount/100
         return amount
 
     def clean_date_due(self):
@@ -71,20 +74,15 @@ class CrowdfundForm(forms.ModelForm):
         return deadline
 
 
-class CrowdfundPaymentForm(forms.ModelForm):
+class CrowdfundPaymentForm(forms.Form):
     """Form to create a payment to a crowdfund"""
-    class Meta:
-        model = CrowdfundPayment
-        fields = ['amount', 'show', 'crowdfund']
-        widgets = {
-            'amount': NumberInput(),
-            'show': forms.CheckboxInput(),
-            'crowdfund': forms.HiddenInput()
-        }
+    stripe_amount = forms.CharField(widget=NumberInput())
+    show = forms.BooleanField(required=False, widget=forms.CheckboxInput())
+    crowdfund = forms.ModelChoiceField(queryset=Crowdfund.objects.all(), widget=forms.HiddenInput())
 
-    def clean_amount(self):
+    def clean_stripe_amount(self):
         """Ensure the amount of the payment is greater than zero"""
-        amount = self.cleaned_data['amount']
+        amount = self.cleaned_data['stripe_amount']
         if not amount > 0:
             raise forms.ValidationError('Cannot contribute zero dollars')
         amount = Decimal(amount)/100

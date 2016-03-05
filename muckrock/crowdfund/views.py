@@ -19,7 +19,7 @@ import stripe
 
 from muckrock.crowdfund.forms import CrowdfundForm, CrowdfundPaymentForm
 from muckrock.crowdfund.models import Crowdfund
-from muckrock.project.models import Project
+from muckrock.project.models import Project, ProjectCrowdfunds
 
 logger = logging.getLogger(__name__)
 stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -98,21 +98,19 @@ class CrowdfundDetailView(DetailView):
         Next, we charge their card. Finally, use the validated payment form to create and
         return a CrowdfundRequestPayment object.
         """
-        token = request.POST.get('token')
-        email = request.POST.get('email')
+        token = request.POST.get('stripe_token')
+        email = request.POST.get('stripe_email')
         try:
             payment_form = self.get_form()
             # pylint:disable=not-callable
             payment_form = payment_form(request.POST)
             # pylint:enable=not-callable
         except TypeError:
-            logging.error(('The subclassed object does not have a form attribute '
-                           'so no payments can be made.'))
-            raise ValueError('%s does not have its form attribute set.' % self.__class__)
+            raise NotImplementedError('%s does not have its form attribute set.' % self.__class__)
         if payment_form.is_valid() and token:
             cleaned_data = payment_form.cleaned_data
             crowdfund = cleaned_data['crowdfund']
-            amount = cleaned_data['amount']
+            amount = cleaned_data['stripe_amount']
             show = cleaned_data['show']
             user = request.user if request.user.is_authenticated() else None
             stripe_exceptions = (
@@ -124,7 +122,7 @@ class CrowdfundDetailView(DetailView):
             try:
                 crowdfund.make_payment(token, email, amount, show, user)
             except stripe_exceptions as payment_error:
-                logging.error(payment_error)
+                logging.warn(payment_error)
                 self.return_error(request)
             # if AJAX, return HTTP 200 OK
             # else, add a message to the session
@@ -163,15 +161,21 @@ class CrowdfundProjectCreateView(CreateView):
             'project': project.id
         }
 
-    def get_success_url(self):
-        """Generates actions before returning URL"""
-        crowdfund = self.get_object()
+    def form_valid(self, form):
+        """Saves relationship and sends action before returning URL"""
+        redirection = super(CrowdfundProjectCreateView, self).form_valid(form)
+        crowdfund = self.object
         project = self.get_project()
+        relationship = ProjectCrowdfunds.objects.create(project=project, crowdfund=crowdfund)
         actstream.action.send(
             self.request.user,
-            varb='started',
-            action_object=crowdfund,
-            target=project
+            verb='started',
+            action_object=relationship.crowdfund,
+            target=relationship.project
         )
-        return project.get_absolute_url()
+        return redirection
 
+    def get_success_url(self):
+        """Generates actions before returning URL"""
+        project = self.get_project()
+        return project.get_absolute_url()

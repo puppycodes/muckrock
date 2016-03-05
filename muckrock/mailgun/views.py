@@ -46,7 +46,8 @@ def _upload_file(foia, comm, file_, sender):
             date=datetime.now(),
             source=source[:70],
             access=access)
-    foia_file.ffile.save(file_.name[:100].encode('ascii', 'ignore'), file_)
+    # max db size of 255, - 22 for folder name
+    foia_file.ffile.save(file_.name[:233].encode('ascii', 'ignore'), file_)
     foia_file.save()
     if foia:
         upload_document_cloud.apply_async(args=[foia_file.pk, False], countdown=3)
@@ -73,13 +74,32 @@ def _make_orphan_comm(from_, to_, post, files, foia):
     return comm
 
 @csrf_exempt
-def handle_request(request, mail_id):
-    """Handle incoming mailgun FOI request messages"""
-    # pylint: disable=broad-except
+def route_mailgun(request):
+    """Handle routing of incoming mail with proper header parsing"""
 
     post = request.POST
     if not _verify(post):
         return HttpResponseForbidden()
+
+    p_request_email = re.compile(r'(\d+-\d{3,10})@requests.muckrock.com')
+    tos = post.get('To') or post.get('to')
+    ccs = post.get('CC') or post.get('cc')
+    name_emails = [parseaddr(addr) for addr in tos.split(',') + ccs.split(',')]
+    logger.info('Incoming email: %s', name_emails)
+    for _, email in name_emails:
+        m_request_email = p_request_email.match(email)
+        if m_request_email:
+            return _handle_request(request, m_request_email.group(1))
+        elif email == 'fax@requests.muckrock.com':
+            return _fax(request)
+        elif email.endswith('@requests.muckrock.com'):
+            return _catch_all(request, email)
+
+def _handle_request(request, mail_id):
+    """Handle incoming mailgun FOI request messages"""
+    # pylint: disable=broad-except
+
+    post = request.POST
     from_ = post.get('From')
     to_ = post.get('To') or post.get('to')
     subject = post.get('Subject') or post.get('subject', '')
@@ -164,12 +184,8 @@ def handle_request(request, mail_id):
 
     return HttpResponse('OK')
 
-@csrf_exempt
-def fax(request):
+def _fax(request):
     """Handle fax confirmations"""
-
-    if not _verify(request.POST):
-        return HttpResponseForbidden()
 
     p_id = re.compile(r'MR#(\d+)-(\d+)')
 
@@ -197,12 +213,8 @@ def fax(request):
     _forward(request.POST, request.FILES)
     return HttpResponse('OK')
 
-@csrf_exempt
-def catch_all(request, address):
+def _catch_all(request, address):
     """Handle emails sent to other addresses"""
-
-    if not _verify(request.POST):
-        return HttpResponseForbidden()
 
     post = request.POST
 

@@ -14,7 +14,7 @@ from nose.tools import ok_, eq_
 
 from muckrock.crowdfund.forms import CrowdfundPaymentForm
 from muckrock.crowdfund.models import Crowdfund, CrowdfundPayment
-from muckrock.crowdfund.views import CrowdfundDetailView
+from muckrock.crowdfund.views import CrowdfundDetailView, CrowdfundProjectCreateView
 from muckrock.factories import UserFactory, FOIARequestFactory, ProjectFactory
 from muckrock.project.models import ProjectCrowdfunds
 from muckrock.utils import mock_middleware
@@ -69,11 +69,11 @@ class TestCrowdfundView(TestCase):
         self.num_payments = self.crowdfund.payments.count()
         self.url = self.crowdfund.get_absolute_url()
         self.data = {
-            'amount': 200,
+            'stripe_amount': 200,
             'show': '',
             'crowdfund': self.crowdfund.pk,
-            'email': 'test@example.com',
-            'token': 'test'
+            'stripe_email': 'test@example.com',
+            'stripe_token': 'test'
         }
         self.view = CrowdfundDetailView.as_view()
         self.request_factory = RequestFactory()
@@ -88,7 +88,7 @@ class TestCrowdfundView(TestCase):
         """Helper function to post the data as the user."""
         # need a unique token for each POST
         form = CrowdfundPaymentForm(data)
-        ok_(form.is_valid())
+        ok_(form.is_valid(), form.errors)
         request = self.request_factory.post(self.url, data=data)
         request = mock_middleware(request)
         request.user = user
@@ -144,7 +144,7 @@ class TestCrowdfundView(TestCase):
         """
         self.post(self.data)
         payment = CrowdfundPayment.objects.get(crowdfund=self.crowdfund)
-        amount = Decimal(self.data['amount']/100)
+        amount = Decimal(self.data['stripe_amount']/100)
         eq_(payment.amount, amount)
 
     def test_contributors(self):
@@ -171,7 +171,7 @@ class TestCrowdfundView(TestCase):
         """The amount paid should be able to exceed the amount required."""
         data = self.data
         amount_paid = 20000
-        data['amount'] = amount_paid
+        data['stripe_amount'] = amount_paid
         self.post(data)
         payment = CrowdfundPayment.objects.get(crowdfund=self.crowdfund)
         eq_(payment.amount, 200.00,
@@ -182,7 +182,7 @@ class TestCrowdfundView(TestCase):
         self.crowdfund.payment_capped = True
         self.crowdfund.save()
         data = self.data
-        data['amount'] = 20000
+        data['stripe_amount'] = 20000
         self.post(data)
         payment = CrowdfundPayment.objects.get(crowdfund=self.crowdfund)
         eq_(payment.amount, self.crowdfund.payment_required,
@@ -194,10 +194,58 @@ class TestCrowdfundView(TestCase):
         self.crowdfund.payment_received = Decimal('150.00')
         self.crowdfund.save()
         cent_payment = 105 # $1.05
-        self.data['amount'] = cent_payment
+        self.data['stripe_amount'] = cent_payment
         self.post(self.data)
         payment = CrowdfundPayment.objects.get(crowdfund=self.crowdfund)
         eq_(payment.amount, Decimal('01.05'))
+
+
+class TestCrowdfundProjectCreateView(TestCase):
+    """Tests the creation of a crowdfund for a project."""
+    # pylint:disable=no-member
+    def setUp(self):
+        self.project = ProjectFactory()
+        self.url = reverse('project-crowdfund', kwargs={
+            'slug': self.project.slug,
+            'pk': self.project.pk
+        })
+        self.view = CrowdfundProjectCreateView.as_view()
+        self.request_factory = RequestFactory()
+
+    def test_post(self):
+        """Posting data for a crowdfund should create it."""
+        user = UserFactory(is_staff=True)
+        name = 'Project Crowdfund'
+        description = 'A crowdfund'
+        payment_required = 100
+        payment_capped = True
+        date_due = date.today() + timedelta(20)
+        data = {
+            'name': name,
+            'description': description,
+            'payment_required': payment_required,
+            'payment_capped': payment_capped,
+            'date_due': date_due
+        }
+        request = self.request_factory.post(self.url, data)
+        request.user = user
+        request = mock_middleware(request)
+        response = self.view(request, slug=self.project.slug, pk=self.project.pk)
+        self.project.refresh_from_db()
+        eq_(self.project.crowdfunds.count(), 1,
+            'A crowdfund should be created and added to the project.')
+        crowdfund = self.project.crowdfunds.first()
+        eq_(crowdfund.name, name)
+        eq_(crowdfund.description, description)
+        expected_payment_required = Decimal(payment_required + payment_required * .15) / 100
+        eq_(crowdfund.payment_required, expected_payment_required,
+            'Expected payment of %(expected).2f, actually %(actual).2f' % {
+                'expected': expected_payment_required,
+                'actual': crowdfund.payment_required
+            })
+        eq_(crowdfund.payment_capped, payment_capped)
+        eq_(crowdfund.date_due, date_due)
+        eq_(response.status_code, 302)
 
 
 class TestCrowdfundProjectDetailView(TestCase):
@@ -209,8 +257,7 @@ class TestCrowdfundProjectDetailView(TestCase):
             date_due=date.today() + timedelta(30),
         )
         project = ProjectFactory()
-        ProjectCrowdfunds.objects.create(
-                crowdfund=self.crowdfund, project=project)
+        ProjectCrowdfunds.objects.create(crowdfund=self.crowdfund, project=project)
         self.url = self.crowdfund.get_absolute_url()
         self.data = {
             'amount': 200,
@@ -226,3 +273,4 @@ class TestCrowdfundProjectDetailView(TestCase):
         request = self.request_factory.get(self.url)
         response = self.view(request, pk=self.crowdfund.pk)
         eq_(response.status_code, 200, 'The response should be 200 OK.')
+

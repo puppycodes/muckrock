@@ -14,6 +14,7 @@ from django.template.loader import render_to_string
 
 import actstream
 from datetime import datetime, date, timedelta
+from djgeojson.fields import PointField
 from hashlib import md5
 import logging
 from taggit.managers import TaggableManager
@@ -21,7 +22,7 @@ from unidecode import unidecode
 
 from muckrock.agency.models import Agency
 from muckrock.jurisdiction.models import Jurisdiction
-from muckrock.tags.models import Tag, TaggedItemBase
+from muckrock.tags.models import Tag, TaggedItemBase, parse_tags
 from muckrock import task
 from muckrock import fields
 from muckrock import utils
@@ -50,17 +51,18 @@ class FOIARequestQuerySet(models.QuerySet):
         if user.is_staff:
             return self.all()
 
-        # Requests are visible if you own them, or if they are not drafts and not embargoed
+        # Requests are visible if you own them, have view or edit permissions,
+        # or if they are not drafts and not embargoed
         if user.is_authenticated():
-            return self.filter(Q(user=user) |
-                               (~Q(status='started') &
-                                ~Q(embargo=True, date_embargo=None) &
-                                ~Q(embargo=True, date_embargo__gte=date.today())))
+            return self.filter(
+                    Q(user=user) |
+                    Q(edit_collaborators=user) |
+                    Q(read_collaborators=user) |
+                    (~Q(status='started') & ~Q(embargo=True)))
         else:
             # anonymous user, filter out drafts and embargoes
-            return self.exclude(status='started') \
-                       .exclude(embargo=True, date_embargo=None) \
-                       .exclude(embargo=True, date_embargo__gte=date.today())
+            return (self.exclude(status='started')
+                        .exclude(embargo=True))
 
     def get_public(self):
         """Get all publically viewable FOIA requests"""
@@ -222,6 +224,7 @@ class FOIARequest(models.Model):
 
     objects = FOIARequestQuerySet.as_manager()
     tags = TaggableManager(through=TaggedItemBase, blank=True)
+    location = PointField(blank=True)
 
     foia_type = 'foia'
 
@@ -261,12 +264,12 @@ class FOIARequest(models.Model):
         """Should we show a send thank you button for this request?"""
         has_thanks = self.communications.filter(thanks=True).exists()
         valid_status = self.status in [
-                'done',
-                'partial',
-                'rejected',
-                'abandoned',
-                'no_docs',
-                ]
+            'done',
+            'partial',
+            'rejected',
+            'abandoned',
+            'no_docs',
+        ]
         return not has_thanks and valid_status
 
     def is_appealable(self):
@@ -283,9 +286,16 @@ class FOIARequest(models.Model):
         # otherwise it can be appealed as long as it has actually been sent to the agency
         return self.status not in ['started', 'submitted']
 
+    def has_crowdfund(self):
+        """Does this request have crowdfunding enabled?"""
+        return bool(self.crowdfund)
+
     def is_payable(self):
         """Can this request be payed for by the user?"""
-        return self.price > 0 and not self.has_crowdfund()
+        # pylint:disable=no-member
+        has_open_crowdfund = self.has_crowdfund() and not self.crowdfund.closed
+        has_payment_status = self.status == 'payment'
+        return has_payment_status and not has_open_crowdfund
 
     def get_stripe_amount(self):
         """Output a Stripe Checkout formatted price"""
@@ -396,10 +406,6 @@ class FOIARequest(models.Model):
         self.save()
         logger.info('New access key generated for %s', self)
         return key
-
-    def has_crowdfund(self):
-        """Does this request have crowdfunding enabled?"""
-        return bool(self.crowdfund)
 
     def public_documents(self):
         """Get a list of public documents attached to this request"""
@@ -722,6 +728,12 @@ class FOIARequest(models.Model):
     def _followup_days(self):
         """How many days do we wait until we follow up?"""
         # pylint: disable=no-member
+        if self.status == 'ack' and self.jurisdiction:
+            # if we have not at least been acknowledged yet, set the days
+            # to the period required by law
+            jurisdiction_days = self.jurisdiction.get_days()
+            if jurisdiction_days is not None:
+                return jurisdiction_days
         if self.date_estimate and date.today() < self.date_estimate:
             # return the days until the estimated date
             date_difference = self.date_estimate - date.today()
@@ -734,10 +746,7 @@ class FOIARequest(models.Model):
     def update_tags(self, tags):
         """Update the requests tags"""
         tag_set = set()
-        for tag in tags.split(','):
-            tag = Tag.normalize(tag)
-            if not tag:
-                continue
+        for tag in parse_tags(tags):
             new_tag, _ = Tag.objects.get_or_create(name=tag)
             tag_set.add(new_tag)
         self.tags.set(*tag_set)
@@ -774,32 +783,6 @@ class FOIARequest(models.Model):
                 action='flag',
                 desc=u'Something broken, buggy, or off?  Let us know and we’ll fix it',
                 class_name='failure modal'
-            ),
-        ]
-
-    def noncontextual_request_actions(self, can_edit):
-        '''Provides context-insensitive action interfaces for requests'''
-        can_pay = can_edit and self.is_payable()
-        kwargs = {
-            'jurisdiction': self.jurisdiction.slug,
-            'jidx': self.jurisdiction.pk,
-            'idx': self.pk,
-            'slug': self.slug
-        }
-        return [
-            Action(
-                test=can_pay,
-                link=reverse('foia-pay', kwargs=kwargs),
-                title='Pay',
-                desc='Pay the fee for this request',
-                class_name='success'
-            ),
-            Action(
-                test=can_pay,
-                link=reverse('foia-crowdfund', kwargs=kwargs),
-                title='Crowdfund',
-                desc='Ask the community to help pay the fee for this request',
-                class_name='success'
             ),
         ]
 
