@@ -2,9 +2,10 @@
 Django settings for muckrock project
 """
 
+from django.core.urlresolvers import reverse
+import djcelery
 import os
 import urlparse
-from django.core.urlresolvers import reverse
 
 def boolcheck(setting):
     """Turn env var into proper bool"""
@@ -201,6 +202,7 @@ INSTALLED_APPS = (
     'muckrock.crowdfund',
     'muckrock.sidebar',
     'muckrock.task',
+    'muckrock.map',
     'muckrock.message',
     'muckrock.organization',
     'muckrock.project',
@@ -227,7 +229,6 @@ urlparse.uses_netloc.append('redis')
 
 BROKER_URL = os.environ.get('REDISTOGO_URL', 'redis://localhost:6379/0')
 
-import djcelery
 djcelery.setup_loader()
 
 CELERYBEAT_SCHEDULER = 'djcelery.schedulers.DatabaseScheduler'
@@ -328,7 +329,7 @@ LOGGING = {
     'handlers': {
         'null': {
             'level': 'DEBUG',
-            'class': 'django.utils.log.NullHandler',
+            'class': 'logging.NullHandler',
         },
         'console':{
             'level': 'INFO',
@@ -363,7 +364,7 @@ LOGGING = {
         },
         'muckrock': {
             'handlers': ['console', 'mail_admins', 'sentry'],
-            'level': 'WARNING',
+            'level': 'INFO',
         },
         'django.db.backends': {
             'level': 'ERROR',
@@ -417,7 +418,7 @@ PUBLICATION_NAME = 'MuckRock'
 # Register database schemes in URLs.
 urlparse.uses_netloc.append('postgres')
 
-url = urlparse.urlparse(os.environ.get('DATABASE_URL', 'postgres://muckrock@localhost/muckrock'))
+url = urlparse.urlparse(os.environ.get('DATABASE_URL', 'postgres://vagrant@localhost/muckrock'))
 
 # Update with environment configuration.
 DATABASES = {
@@ -491,7 +492,7 @@ LEAFLET_CONFIG = {
     'MIN_ZOOM': 4,
     'MAX_ZOOM': 18,
     'PLUGINS': {
-        'forms': {
+        'search': {
             'css': [
                 'vendor/leaflet-geocoder-control/Control.Geocoder.css',
             ],
@@ -500,6 +501,15 @@ LEAFLET_CONFIG = {
                 'js/leaflet-form.js'
             ],
             'auto-include': True,
+        },
+        'draw': {
+            'css': [
+                'leaflet/draw/leaflet.draw.css',
+                'leaflet/draw/leaflet.draw.ie.css'
+            ],
+            'js': [
+                'leaflet/draw/leaflet.draw.js'
+            ]
         }
     }
 }

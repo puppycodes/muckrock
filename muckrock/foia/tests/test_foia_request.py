@@ -8,11 +8,11 @@ from django.core import mail
 from django.test import TestCase, RequestFactory
 
 import datetime
+from datetime import date as real_date
 from mock import Mock
 import nose.tools
-import re
-from datetime import date as real_date
 from operator import attrgetter
+import re
 
 from muckrock.factories import UserFactory, FOIARequestFactory
 from muckrock.foia.models import FOIARequest, FOIACommunication
@@ -29,7 +29,6 @@ eq_ = nose.tools.eq_
 # pylint: disable=no-self-use
 # pylint: disable=too-many-public-methods
 # pylint: disable=too-many-lines
-# pylint: disable=no-member
 # pylint: disable=invalid-name
 # pylint: disable=bad-mcs-method-argument
 
@@ -41,7 +40,6 @@ class TestFOIARequestUnit(TestCase):
 
     def setUp(self):
         """Set up tests"""
-        # pylint: disable=C0103
 
         mail.outbox = []
 
@@ -327,9 +325,9 @@ class TestFOIAFunctional(TestCase):
         kwargs = {'jurisdiction': foia.jurisdiction.slug,
                   'jidx': foia.jurisdiction.pk,
                   'idx': foia.pk, 'slug': foia.slug}
-        draft = reverse('foia-draft', kwargs=kwargs)
-        detail = reverse('foia-detail', kwargs=kwargs)
-        chain = [('http://testserver' + url, 302) for url in (detail, draft)]
+        draft = reverse('foia-draft', kwargs=kwargs).replace('http://testserver', '')
+        detail = reverse('foia-detail', kwargs=kwargs).replace('http://testserver', '')
+        chain = [(url, 302) for url in (detail, draft)]
         response = self.client.post(draft, foia_data, follow=True)
         nose.tools.eq_(response.status_code, 200)
         nose.tools.eq_(response.redirect_chain, chain)
@@ -360,9 +358,7 @@ class TestFOIAIntegration(TestCase):
 
     def setUp(self):
         """Set up tests"""
-        # pylint: disable=C0103
         # pylint: disable=bad-super-call
-        # pylint: disable=C0111
 
         mail.outbox = []
 
@@ -371,6 +367,7 @@ class TestFOIAIntegration(TestCase):
         # Replace real date and time with mock ones so we can control today's/now's value
         # Unfortunately need to monkey patch this a lot of places, and it gets rather ugly
         #http://tech.yunojuno.com/mocking-dates-with-django
+        # pylint: disable=missing-docstring
         class MockDate(datetime.date):
             def __add__(self, other):
                 d = super(MockDate, self).__add__(other)
@@ -407,7 +404,6 @@ class TestFOIAIntegration(TestCase):
 
     def tearDown(self):
         """Tear down tests"""
-        # pylint: disable=C0103
 
         import muckrock.foia.models
 
@@ -439,8 +435,7 @@ class TestFOIAIntegration(TestCase):
         ## create and submit request
         foia = FOIARequest.objects.create(
             user=user, title='Test with no email', slug='test-with-no-email',
-            status='submitted', jurisdiction=jurisdiction, agency=agency,
-            location=agency.location)
+            status='submitted', jurisdiction=jurisdiction, agency=agency)
         comm = FOIACommunication.objects.create(
             foia=foia, from_who='Muckrock', to_who='Test Agency', date=datetime.datetime.now(),
             response=False, communication=u'Test communication')

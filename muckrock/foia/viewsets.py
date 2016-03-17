@@ -30,13 +30,11 @@ class FOIARequestViewSet(viewsets.ModelViewSet):
     Filter fields: `user`, `title`, `status`, `jurisdiction`, `agency`, `embargo`, `tags`
     """
     # pylint: disable=too-many-public-methods
-    # pylint: disable=C0103
     serializer_class = FOIARequestSerializer
     permission_classes = (FOIAPermissions,)
 
     class Filter(django_filters.FilterSet):
         """API Filter for FOIA Requests"""
-        # pylint: disable=no-member
         # pylint: disable=too-few-public-methods
         agency = django_filters.CharFilter(name='agency__name')
         jurisdiction = django_filters.CharFilter(name='jurisdiction__name')
@@ -76,7 +74,7 @@ class FOIARequestViewSet(viewsets.ModelViewSet):
             foia = FOIARequest.objects.create(user=request.user, status='started', title=title,
                                               jurisdiction=jurisdiction, slug=slug,
                                               agency=agency, requested_docs=requested_docs,
-                                              description=requested_docs, location=agency.location)
+                                              description=requested_docs)
             FOIACommunication.objects.create(
                     foia=foia, from_who=request.user.get_full_name(), to_who=foia.get_to_who(),
                     date=datetime.now(), response=False, full_html=False,
@@ -163,14 +161,12 @@ class FOIARequestViewSet(viewsets.ModelViewSet):
 class FOIACommunicationViewSet(viewsets.ModelViewSet):
     """API views for FOIARequest"""
     # pylint: disable=too-many-public-methods
-    # pylint: disable=C0103
     queryset = FOIACommunication.objects.prefetch_related('files')
     serializer_class = FOIACommunicationSerializer
     permission_classes = (DjangoModelPermissions,)
 
     class Filter(django_filters.FilterSet):
         """API Filter for FOIA Communications"""
-        # pylint: disable=no-member
         # pylint: disable=too-few-public-methods
         min_date = django_filters.DateFilter(name='date', lookup_type='gte')
         max_date = django_filters.DateFilter(name='date', lookup_type='lte')
