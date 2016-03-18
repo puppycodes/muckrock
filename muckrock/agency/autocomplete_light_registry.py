@@ -27,14 +27,14 @@ class AgencyAutocomplete(autocomplete_light.AutocompleteModelBase):
 
         return self.order_choices(choices)[0:self.limit_choices]
 
+    def _filter_by_jurisdiction(self, choices, jurisdiction_id):
+        """Filter the agency choices given a jurisdiction"""
+        return choices.filter(jurisdiction_id=jurisdiction_id)
+
 
 class AgencyAdminAutocomplete(AgencyAutocomplete):
     """Autocomplete for Agencies for FOIA admin page"""
     attrs = {'placeholder': 'Agency?'}
-
-    def _filter_by_jurisdiction(self, choices, jurisdiction_id):
-        """Filter the agency choices given a jurisdiction"""
-        return choices.filter(jurisdiction_id=jurisdiction_id)
 
 
 class AgencyAppealAdminAutocomplete(AgencyAdminAutocomplete):
