@@ -29,6 +29,7 @@ class AgencyAutocomplete(autocomplete_light.AutocompleteModelBase):
 
     def _filter_by_jurisdiction(self, choices, jurisdiction_id):
         """Filter the agency choices given a jurisdiction"""
+        # pylint: disable=no-self-use
         return choices.filter(jurisdiction_id=jurisdiction_id)
 
 
@@ -43,6 +44,7 @@ class AgencyAppealAdminAutocomplete(AgencyAdminAutocomplete):
 
     def _filter_by_jurisdiction(self, choices, jurisdiction_id):
         """Filter the agency choices given a jurisdiction"""
+        # pylint: disable=no-self-use
         jurisdiction = Jurisdiction.objects.get(pk=jurisdiction_id)
         if jurisdiction.level == 'l':
             # For local jurisdictions, appeal agencies may come from the
