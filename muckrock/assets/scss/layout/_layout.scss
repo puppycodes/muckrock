@@ -19,9 +19,8 @@ html, body {
 
 .content {
     @include flex(1);
-    margin: $vertical-rhythm 0;
-    padding: 0 $vertical-rhythm/2;
-    @include media($medium-layout) { padding: 0 $vertical-rhythm; }
+    padding: $vertical-rhythm/2;
+    @include media($medium-layout) { padding: $vertical-rhythm; }
 }
 
 section.error-404 {
