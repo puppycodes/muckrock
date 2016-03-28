@@ -2,6 +2,7 @@
 FOIA views for composing
 """
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import authenticate, login
 from django.contrib.auth.decorators import login_required
@@ -38,7 +39,6 @@ from muckrock.foia.models import (
     STATUS,
     )
 from muckrock.jurisdiction.models import Jurisdiction
-from muckrock.settings import STRIPE_PUB_KEY, MONTHLY_REQUESTS
 from muckrock.task.models import NewAgencyTask, MultiRequestTask
 
 # pylint: disable=too-many-ancestors
@@ -75,13 +75,14 @@ def _make_new_agency(request, agency, jurisdiction):
     """Helper function to create new agency"""
     user = request.user if request.user.is_authenticated() else None
     agency = Agency.objects.create(
-        name=agency[:255],
-        slug=(slugify(agency[:255]) or 'untitled'),
+        name=agency,
+        slug=(slugify(agency) or 'untitled'),
         jurisdiction=jurisdiction,
         user=user,
         status='pending',
     )
     NewAgencyTask.objects.create(
+            assigned=user,
             user=user,
             agency=agency)
     return agency
@@ -116,7 +117,7 @@ def _make_user(request, data):
     base_username = data['full_name'].replace(' ', '')[:30]
     username = base_username
     num = 1
-    while User.objects.filter(username=username).exists():
+    while User.objects.filter(username__iexact=username).exists():
         postfix = str(num)
         username = '%s%s' % (base_username[:30 - len(postfix)], postfix)
         num += 1
@@ -136,7 +137,7 @@ def _make_user(request, data):
     Profile.objects.create(
         user=user,
         acct_type='basic',
-        monthly_requests=MONTHLY_REQUESTS.get('basic', 0),
+        monthly_requests=settings.MONTHLY_REQUESTS.get('basic', 0),
         date_update=datetime.now()
     )
     # send the new user a welcome email
@@ -342,7 +343,7 @@ def draft_request(request, jurisdiction, jidx, slug, idx):
         'form': form,
         'foia': foia,
         'remaining': foia.user.profile.total_requests(),
-        'stripe_pk': STRIPE_PUB_KEY,
+        'stripe_pk': settings.STRIPE_PUB_KEY,
         'sidebar_admin_url': reverse('admin:foia_foiarequest_change', args=(foia.pk,))
     }
 
@@ -371,12 +372,13 @@ def create_multirequest(request):
         # 5. listN = list(reduce(set.intersection, listN))
         for agency_query in agency_queries:
             if len(agency_query) > 2:
-                matching_agencies.append(set(list(Agency.objects.filter(approved=True).filter(
-                    Q(name__icontains=agency_query)|
-                    Q(aliases__icontains=agency_query)|
-                    Q(jurisdiction__name__icontains=agency_query)|
-                    Q(types__name__exact=agency_query)
-                ))))
+                matching_agencies.append(set(list(
+                    Agency.objects.filter(status='approved').filter(
+                        Q(name__icontains=agency_query)|
+                        Q(aliases__icontains=agency_query)|
+                        Q(jurisdiction__name__icontains=agency_query)|
+                        Q(types__name__exact=agency_query)
+                        ))))
         try:
             matching_agencies = list(reduce(set.intersection, matching_agencies))
         except TypeError:
@@ -465,7 +467,7 @@ def draft_multirequest(request, slug, idx):
         'profile': profile,
         'balance': request_balance,
         'bundles': num_bundles,
-        'stripe_pk': STRIPE_PUB_KEY
+        'stripe_pk': settings.STRIPE_PUB_KEY
     }
 
     return render_to_response(

@@ -3,6 +3,7 @@ General temaplate tags
 """
 
 from django import template
+from django.conf import settings
 from django.template import Library, Node, TemplateSyntaxError
 from django.template.defaultfilters import stringfilter
 from django.utils.html import escape
@@ -11,7 +12,7 @@ from email.parser import Parser
 import re
 
 from muckrock.forms import TagManagerForm
-from muckrock.settings import STATIC_URL
+from muckrock.project.forms import ProjectManagerForm
 
 register = Library()
 
@@ -66,10 +67,10 @@ class TableHeaderNode(Node):
             if field:
                 if get.get('field') == field and get.get('order') == 'asc':
                     order = 'desc'
-                    img = '&nbsp;<img src="%simg/down-arrow.png" />' % STATIC_URL
+                    img = '&nbsp;<img src="%simg/down-arrow.png" />' % settings.STATIC_URL
                 elif get.get('field') == field and get.get('order') == 'desc':
                     order = 'asc'
-                    img = '&nbsp;<img src="%simg/up-arrow.png" />' % STATIC_URL
+                    img = '&nbsp;<img src="%simg/up-arrow.png" />' % settings.STATIC_URL
                 else:
                     order = 'asc'
                     img = ''
@@ -178,6 +179,28 @@ def tag_manager(context, mr_object):
         'form': form,
         'is_authorized': is_authorized,
         'endpoint': mr_object.get_absolute_url()
+    }
+
+@register.inclusion_tag('project/component/manager.html', takes_context=True)
+def project_manager(context, mr_object):
+    """Template tag to insert a project manager component"""
+    try:
+        projects = mr_object.projects.all()
+    except AttributeError:
+        projects = None
+    try:
+        owner = mr_object.user
+    except AttributeError:
+        owner = None
+    user = context['user']
+    experimental = user.is_authenticated() and user.profile.experimental
+    authorized = user.is_staff or (user == owner and experimental)
+    form = ProjectManagerForm(initial={'projects': [project.pk for project in projects]})
+    return {
+        'projects': projects,
+        'form': form,
+        'authorized': authorized,
+        'endpoint': mr_object.get_absolute_url(),
     }
 
 @register.filter

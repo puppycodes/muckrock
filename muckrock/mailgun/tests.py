@@ -2,6 +2,7 @@
 Tests for mailgun
 """
 
+from django.conf import settings
 from django.core import mail
 from django.core.urlresolvers import reverse
 from django.test import TestCase
@@ -14,7 +15,6 @@ import os
 import time
 
 from muckrock.foia.models import FOIARequest
-from muckrock.settings import MAILGUN_ACCESS_KEY, SITE_ROOT
 
 # pylint: disable=no-self-use
 # pylint: disable=too-many-public-methods
@@ -26,7 +26,6 @@ class TestMailgunViews(TestCase):
 
     def setUp(self):
         """Set up tests"""
-        # pylint: disable=C0103
         mail.outbox = []
         self.kwargs = {"wsgi.url_scheme": "https"}
 
@@ -34,7 +33,7 @@ class TestMailgunViews(TestCase):
         """Add mailgun signature to data"""
         token = 'token'
         timestamp = int(time.time())
-        signature = hmac.new(key=MAILGUN_ACCESS_KEY,
+        signature = hmac.new(key=settings.MAILGUN_ACCESS_KEY,
                              msg='%s%s' % (timestamp, token),
                              digestmod=hashlib.sha256).hexdigest()
         data['token'] = token
@@ -54,8 +53,10 @@ class TestMailgunViews(TestCase):
             'body-plain':    'Test normal.',
         }
         self.sign(data)
-        response = self.client.post(reverse('mailgun-request',
-                                    kwargs={'mail_id': foia.get_mail_id()}), data, **self.kwargs)
+        response = self.client.post(
+                reverse('mailgun-route'),
+                data,
+                **self.kwargs)
         nose.tools.eq_(response.status_code, 200)
 
         foia = FOIARequest.objects.get(pk=1)
@@ -75,8 +76,10 @@ class TestMailgunViews(TestCase):
             'body-plain':    'Test bad sender.',
         }
         self.sign(data)
-        response = self.client.post(reverse('mailgun-request',
-                                    kwargs={'mail_id': foia.get_mail_id()}), data, **self.kwargs)
+        response = self.client.post(
+                reverse('mailgun-route'),
+                data,
+                **self.kwargs)
         nose.tools.eq_(response.status_code, 200)
 
     def test_bad_addr(self):
@@ -91,8 +94,10 @@ class TestMailgunViews(TestCase):
             'body-plain':    'Test bad address.',
         }
         self.sign(data)
-        response = self.client.post(reverse('mailgun-request',
-                                    kwargs={'mail_id': '123-12345678'}), data, **self.kwargs)
+        response = self.client.post(
+                reverse('mailgun-route'),
+                data,
+                **self.kwargs)
         nose.tools.eq_(response.status_code, 200)
 
     def test_attachments(self):
@@ -112,9 +117,10 @@ class TestMailgunViews(TestCase):
                 'attachment-1': open('data.xls'),
             }
             self.sign(data)
-            response = self.client.post(reverse('mailgun-request',
-                                        kwargs={'mail_id': foia.get_mail_id()}), data,
-                                        **self.kwargs)
+            response = self.client.post(
+                    reverse('mailgun-route'),
+                    data,
+                    **self.kwargs)
             nose.tools.eq_(response.status_code, 200)
 
             foia = FOIARequest.objects.get(pk=1)
@@ -124,7 +130,7 @@ class TestMailgunViews(TestCase):
         finally:
             foia.files.all()[0].delete()
             os.remove('data.xls')
-            file_path = os.path.join(SITE_ROOT, 'static/media/', file_path)
+            file_path = os.path.join(settings.SITE_ROOT, 'static/media/', file_path)
             if os.path.exists(file_path):
                 os.remove(file_path)
 
@@ -140,7 +146,7 @@ class TestMailgunViews(TestCase):
             'body-plain':    'Test fax.',
         }
         self.sign(data)
-        response = self.client.post(reverse('mailgun-fax'), data, **self.kwargs)
+        response = self.client.post(reverse('mailgun-route'), data, **self.kwargs)
         nose.tools.eq_(response.status_code, 200)
 
         nose.tools.eq_(len(mail.outbox), 1)

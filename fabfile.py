@@ -1,4 +1,4 @@
-from fabric.api import cd, env, lcd, local, run, settings, task, prompt
+from fabric.api import cd, env, lcd, local, run, settings, task, prompt, warn_only
 import os
 
 env.run = local
@@ -28,20 +28,21 @@ def staging():
 @task
 def test(test_path='', reuse='0', capture=False):
     """Run all tests, or a specific subset of tests"""
-    cmd = 'REUSE_DB=%(reuse)s ./manage.py test %(test_path)s %(capture)s' % {
+    cmd = ('REUSE_DB=%(reuse)s ./manage.py test %(test_path)s %(capture)s '
+           '--settings=muckrock.settings.test' % {
         'reuse': reuse,
         'test_path': test_path,
         'capture': '--nologcapture' if not capture else ''
-    }
+    })
     with env.cd(env.base_path):
         env.run(cmd)
 
 @task
-def coverage():
+def coverage(settings='test'):
     """Run the tests and generate a coverage report"""
     with env.cd(env.base_path):
         env.run('coverage erase')
-        env.run('coverage run --branch --source muckrock manage.py test')
+        env.run('coverage run --branch --source muckrock manage.py test --settings=muckrock.settings.%s' % settings)
         env.run('coverage html')
 
 @task
@@ -49,8 +50,8 @@ def pylint():
     """Run pylint"""
     with env.cd(env.base_path):
         excludes = ['migrations', '__init__.py', 'manage.py', 'formwizard',
-                    'vendor', 'fabfile', 'static', 'nested_inlines']
-        stmt = ('find . -name "*.py"' +
+                    'vendor', 'fabfile', 'static', 'nested_inlines', 'node_modules']
+        stmt = ('find ./muckrock -name "*.py"' +
                 ''.join(' | grep -v %s' % e for e in excludes) +
                 ' | xargs pylint --load-plugins=pylint_django '
                 '--rcfile=config/pylint.conf -r n')
@@ -96,8 +97,8 @@ def populate_db():
         return
 
     with env.cd(env.base_path):
-        env.run('PGUSER=postgres dropdb muckrock')
-        env.run('PGUSER=postgres heroku pg:pull DATABASE muckrock --app muckrock')
+        env.run('dropdb muckrock')
+        env.run('heroku pg:pull DATABASE muckrock --app muckrock')
 
 @task(name='sync-aws')
 def sync_aws():
@@ -111,7 +112,7 @@ def sync_aws():
             'news_photos',
             'project_images',
             ]
-    with env.cd(env.base_path):
+    with env.cd(env.base_path), warn_only():
         for folder in folders:
             env.run('aws s3 sync s3://muckrock/{folder} '
                     './muckrock/static/media/{folder}'
@@ -158,4 +159,23 @@ def setup():
     with settings(user='vagrant', host_string='127.0.0.1:2222', key_filename=result.split()[1]):
         manage('migrate')
 
+@task(name='update-staging-db')
+def update_staging_db():
+    """Update the staging database"""
+    env.run('heroku maintenance:on --app muckrock-staging')
+    env.run('heroku pg:copy muckrock::DATABASE_URL DATABASE_URL --app muckrock-staging')
+    env.run('heroku maintenance:off --app muckrock-staging')
 
+@task(name='pip-compile')
+def pip_compile():
+    """Update requirements"""
+    with env.cd(os.path.join(env.base_path, 'pip')):
+        env.run('pip-compile --upgrade requirements.in')
+        env.run('pip-compile --upgrade dev-requirements.in')
+        env.run('cp -f requirements.txt ../')
+
+@task(name='pip-sync')
+def pip_sync():
+    """sync requirements"""
+    with env.cd(os.path.join(env.base_path, 'pip')):
+        env.run('pip-sync requirements.txt dev-requirements.txt')

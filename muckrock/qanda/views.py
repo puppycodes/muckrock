@@ -22,7 +22,7 @@ from muckrock.foia.models import FOIAFile
 from muckrock.qanda.models import Question, Answer
 from muckrock.qanda.forms import QuestionForm, AnswerForm
 from muckrock.qanda.serializers import QuestionSerializer, QuestionPermissions
-from muckrock.tags.models import Tag
+from muckrock.tags.models import Tag, parse_tags
 from muckrock.views import MRFilterableListView
 
 class QuestionList(MRFilterableListView):
@@ -90,10 +90,7 @@ class Detail(DetailView):
         tags = request.POST.get('tags')
         if tags:
             tag_set = set()
-            for tag in tags.split(','):
-                tag = Tag.normalize(tag)
-                if not tag:
-                    continue
+            for tag in parse_tags(tags):
                 new_tag, _ = Tag.objects.get_or_create(name=tag)
                 tag_set.add(new_tag)
             self.get_object().tags.set(*tag_set)
@@ -193,7 +190,6 @@ def create_answer(request, slug, idx):
 class QuestionViewSet(viewsets.ModelViewSet):
     """API views for Question"""
     # pylint: disable=too-many-public-methods
-    # pylint: disable=C0103
     # pylint: disable=too-many-ancestors
     queryset = (Question.objects.select_related('user')
             .prefetch_related('tags',

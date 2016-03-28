@@ -41,6 +41,8 @@ ACCT_TYPES = [
     ('robot', 'Robot'),
 ]
 
+PAYMENT_FEE = .05
+
 class Profile(models.Model):
     """User profile information for muckrock"""
     # pylint: disable=too-many-public-methods
@@ -145,7 +147,6 @@ class Profile(models.Model):
     @models.permalink
     def get_absolute_url(self):
         """The url for this object"""
-        # pylint: disable=no-member
         return ('acct-profile', [], {'username': self.user.username})
 
     def is_advanced(self):
@@ -248,6 +249,7 @@ class Profile(models.Model):
 
     def customer(self):
         """Retrieve the customer from Stripe or create one if it doesn't exist. Then return it."""
+        # pylint: disable=redefined-variable-type
         try:
             if not self.customer_id:
                 raise AttributeError('No Stripe ID')
@@ -272,10 +274,7 @@ class Profile(models.Model):
     def has_subscription(self):
         """Check Stripe to see if this user has any active subscriptions."""
         customer = self.customer()
-        if customer.subscriptions.total_count > 0:
-            return True
-        else:
-            return False
+        return customer.subscriptions.total_count > 0
 
     def start_pro_subscription(self, token=None):
         """Subscribe this profile to a professional plan. Return the subscription."""
@@ -316,13 +315,18 @@ class Profile(models.Model):
         self.save()
         return subscription
 
-    def pay(self, token, amount, metadata):
-        """Create a stripe charge for the user"""
+    def pay(self, token, amount, metadata, fee=PAYMENT_FEE):
+        """
+        Creates a Stripe charge for the user.
+        Should always expect a 1-cent based integer (e.g. $1.00 = 100)
+        Should apply a baseline fee (5%) to all payments.
+        """
         # pylint: disable=no-self-use
+        modified_amount = int(amount + (amount * fee))
         if not metadata.get('email') or not metadata.get('action'):
             raise ValueError('The charge metadata is malformed.')
         stripe.Charge.create(
-            amount=amount,
+            amount=modified_amount,
             currency='usd',
             source=token,
             metadata=metadata
@@ -337,13 +341,11 @@ class Profile(models.Model):
 
     def notify(self, foia):
         """Queue up a notification for later"""
-        # pylint: disable=no-member
         self.notifications.add(foia)
         self.save()
 
     def send_notifications(self):
         """Send deferred notifications"""
-        # pylint: disable=no-member
 
         subjects = {
             'done': "you've got new MuckRock docs!",
@@ -457,6 +459,9 @@ class Statistics(models.Model):
     daily_requests_pro = models.IntegerField(null=True, blank=True)
     daily_requests_basic = models.IntegerField(null=True, blank=True)
     daily_requests_beta = models.IntegerField(null=True, blank=True)
+    daily_requests_proxy = models.IntegerField(null=True, blank=True)
+    daily_requests_admin = models.IntegerField(null=True, blank=True)
+    daily_requests_org = models.IntegerField(null=True, blank=True)
     daily_articles = models.IntegerField(null=True, blank=True)
 
     # Task statistics
@@ -485,6 +490,10 @@ class Statistics(models.Model):
     total_crowdfundpayment_tasks = models.IntegerField(null=True, blank=True)
     total_unresolved_crowdfundpayment_tasks = models.IntegerField(null=True, blank=True)
     daily_robot_response_tasks = models.IntegerField(null=True, blank=True)
+
+    # Org stats
+    total_active_org_members = models.IntegerField(null=True, blank=True)
+    total_active_orgs = models.IntegerField(null=True, blank=True)
 
     # notes
     public_notes = models.TextField(default='', blank=True)

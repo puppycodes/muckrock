@@ -9,12 +9,15 @@ import datetime
 import factory
 
 from muckrock.accounts.models import Profile, Statistics
-from muckrock.agency.models import Agency
-from muckrock.foia.models import FOIARequest, FOIACommunication
+from muckrock.agency.models import Agency, STALE_DURATION
+from muckrock.foia.models import FOIARequest, FOIACommunication, RawEmail
 from muckrock.jurisdiction.models import Jurisdiction
+from muckrock.news.models import Article
 from muckrock.organization.models import Organization
 from muckrock.project.models import Project
 from muckrock.qanda.models import Question, Answer
+
+# pylint:disable=too-many-instance-attributes
 
 class ProfileFactory(factory.django.DjangoModelFactory):
     """A factory for creating Profile test objects."""
@@ -53,6 +56,7 @@ class JurisdictionFactory(factory.django.DjangoModelFactory):
 
     name = factory.Sequence(lambda n: "Jurisdiction %d" % n)
     slug = factory.LazyAttribute(lambda obj: slugify(obj.name))
+    days = 20
     level = 'f'
 
 
@@ -63,7 +67,7 @@ class AgencyFactory(factory.django.DjangoModelFactory):
 
     name = factory.Sequence(lambda n: "Agency %d" % n)
     slug = factory.LazyAttribute(lambda obj: slugify(obj.name))
-    jurisdiction = factory.SubFactory(JurisdictionFactory)
+    jurisdiction = factory.SubFactory('muckrock.factories.JurisdictionFactory')
     status = 'approved'
 
 
@@ -75,7 +79,7 @@ class FOIARequestFactory(factory.django.DjangoModelFactory):
     title = factory.Sequence(lambda n: "FOIA Request %d" % n)
     slug = factory.LazyAttribute(lambda obj: slugify(obj.title))
     user = factory.SubFactory(UserFactory)
-    jurisdiction = factory.SubFactory(JurisdictionFactory)
+    jurisdiction = factory.SubFactory('muckrock.factories.JurisdictionFactory')
 
 
 class FOIACommunicationFactory(factory.django.DjangoModelFactory):
@@ -87,6 +91,15 @@ class FOIACommunicationFactory(factory.django.DjangoModelFactory):
     from_who = factory.Sequence(lambda n: "From: %d" % n)
     priv_from_who = 'Test Sender <test@muckrock.com>'
     date = factory.LazyAttribute(lambda obj: datetime.datetime.now())
+    rawemail = factory.RelatedFactory('muckrock.factories.RawEmailFactory', 'communication')
+
+class RawEmailFactory(factory.django.DjangoModelFactory):
+    """A factory for creating  objects."""
+    class Meta:
+        model = RawEmail
+
+    communication = factory.SubFactory(FOIACommunicationFactory, rawemail=None)
+    raw_email = factory.Faker('paragraph')
 
 
 class ProjectFactory(factory.django.DjangoModelFactory):
@@ -95,6 +108,7 @@ class ProjectFactory(factory.django.DjangoModelFactory):
         model = Project
 
     title = factory.Sequence(lambda n: "Project %d" % n)
+    slug = factory.LazyAttribute(lambda obj: slugify(obj.title))
 
 
 class QuestionFactory(factory.django.DjangoModelFactory):
@@ -119,6 +133,35 @@ class AnswerFactory(factory.django.DjangoModelFactory):
     question = factory.SubFactory(QuestionFactory)
     answer = factory.Faker('paragraph')
 
+
+class ArticleFactory(factory.django.DjangoModelFactory):
+    """A factory for creating Article test objects."""
+    class Meta:
+        model = Article
+
+    title = factory.Sequence(lambda n: "Article %d" % n)
+    slug = factory.LazyAttribute(lambda obj: slugify(obj.title))
+    summary = factory.Faker('paragraph')
+    body = factory.Faker('paragraph')
+
+    @factory.post_generation
+    def authors(self, create, extracted, **kwargs):
+        """Adds M2M authors"""
+        # pylint: disable=unused-argument
+        if not create:
+            # Simple build, do nothing.
+            return
+        if extracted:
+            # A list of authors were passed in, use them
+            for author in extracted:
+                self.authors.add(author)
+            return
+        # In all other cases, add at least one author
+        author = UserFactory()
+        self.authors.add(author)
+        return
+
+
 class StatisticsFactory(factory.django.DjangoModelFactory):
     """A factory for creating Statistics test objects."""
     class Meta:
@@ -141,3 +184,24 @@ class StatisticsFactory(factory.django.DjangoModelFactory):
     total_tasks = 100
     total_unresolved_tasks = 45
     daily_robot_response_tasks = 12
+
+# Stale Agency Factory
+
+class StaleAgencyFactory(AgencyFactory):
+    """A factory for creating stale Agency test objects."""
+    stale = True
+    stale_foia = factory.RelatedFactory('muckrock.factories.StaleFOIARequestFactory', 'agency')
+
+
+class StaleFOIARequestFactory(FOIARequestFactory):
+    """A factory for creating stale FOIARequest test objects."""
+    status = 'ack'
+    stale_comm = factory.RelatedFactory('muckrock.factories.StaleFOIACommunicationFactory', 'foia')
+
+
+class StaleFOIACommunicationFactory(FOIACommunicationFactory):
+    """A factory for creating stale FOIARequest test objects."""
+    response = True
+    date = factory.LazyAttribute(
+        lambda obj: datetime.datetime.now() - datetime.timedelta(STALE_DURATION + 1)
+    )

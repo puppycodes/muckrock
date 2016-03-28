@@ -11,6 +11,18 @@
         &.visible {
             display: block;
         }
+        footer {
+            @include display(flex);
+            @include justify-content(space-between);
+        }
+    }
+    input[type="text"] {
+        width: 100%;
+    }
+    .deck {
+        display: block;
+        width: 100%;
+        margin-bottom: $vertical-rhythm;
     }
 }
 
@@ -55,12 +67,6 @@
 }
 
 .manager {
-    .tag-list {
-        margin-bottom: $vertical-rhythm;
-    }
-    .tag-list li {
-        display: inline-block;
-    }
     .tag-form {
         display: none;
         @include flex-wrap(wrap);
@@ -77,21 +83,5 @@
         .tag-form-button {
             margin-bottom: $vertical-rhythm/4;
         }
-    }
-}
-
-.tag {
-    display: inline-block;
-    margin: $vertical-rhythm/4 $vertical-rhythm/6;
-    padding: $vertical-rhythm/6 $vertical-rhythm/3 $vertical-rhythm/6 $vertical-rhythm/3;
-    background-color: $color-blue;
-    color: $color-white;
-    font-size: $font-size-2;
-    text-decoration: none;
-    @include transition(background-color .25s linear);
-    &:hover {
-        color: $color-white;
-        background-color: $color-blue-dark;
-        text-decoration: none;
     }
 }

@@ -2,6 +2,7 @@
 Views for the FOIA application
 """
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.models import User
 from django.contrib.auth.decorators import login_required, user_passes_test
@@ -15,10 +16,12 @@ from django.template import RequestContext
 from django.views.generic.detail import DetailView
 
 import actstream
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 
+from muckrock.agency.forms import AgencyForm
+from muckrock.crowdfund.forms import CrowdfundForm
 from muckrock.foia.codes import CODES
 from muckrock.foia.forms import (
     RequestFilterForm,
@@ -42,8 +45,8 @@ from muckrock.foia.views.comms import (
         resend_comm,
         change_comm_status,
         )
+from muckrock.project.forms import ProjectManagerForm
 from muckrock.qanda.models import Question
-from muckrock.settings import STRIPE_PUB_KEY
 from muckrock.tags.models import Tag
 from muckrock.task.models import Task, FlaggedTask, StatusChangeTask
 from muckrock.views import class_view_decorator, MRFilterableListView
@@ -204,6 +207,7 @@ class Detail(DetailView):
     def get_object(self, queryset=None):
         """Get the FOIA Request"""
         # pylint: disable=unused-argument
+        # pylint: disable=unsubscriptable-object
         # this is called twice in dispatch, so cache to not actually run twice
         if self._obj:
             return self._obj
@@ -251,6 +255,7 @@ class Detail(DetailView):
         context['all_tags'] = Tag.objects.all()
         context['past_due'] = is_past_due
         context['user_can_edit'] = user_can_edit
+        context['user_can_pay'] = user_can_edit and foia.is_payable()
         context['embargo'] = {
             'show': ((user_can_edit and foia.user.profile.can_embargo)\
                     or foia.embargo) or user.is_staff,
@@ -264,20 +269,27 @@ class Detail(DetailView):
         })
         context['note_form'] = FOIANoteForm()
         context['access_form'] = FOIAAccessForm()
+        context['crowdfund_form'] = CrowdfundForm(initial={
+            'name': u'Crowdfund Request: %s' % unicode(foia),
+            'description': 'Help cover the request fees needed to free these docs!',
+            'payment_required': foia.get_stripe_amount(),
+            'date_due': datetime.now() + timedelta(30),
+            'foia': foia
+        })
         context['embargo_needs_date'] = foia.status in END_STATUS
         context['user_actions'] = foia.user_actions(user)
-        context['noncontextual_request_actions'] = \
-                foia.noncontextual_request_actions(user_can_edit)
         context['contextual_request_actions'] = \
                 foia.contextual_request_actions(user, user_can_edit)
         context['status_choices'] = STATUS if include_draft else STATUS_NODRAFT
         context['show_estimated_date'] = foia.status not in ['submitted', 'ack', 'done', 'rejected']
         context['change_estimated_date'] = FOIAEstimatedCompletionDateForm(instance=foia)
-        if user.is_staff:
-            all_tasks = Task.objects.filter_by_foia(foia)
-            context['task_count'] = len(all_tasks)
-            context['open_tasks'] = [task for task in all_tasks if not task.resolved]
-        context['stripe_pk'] = STRIPE_PUB_KEY
+
+        all_tasks = Task.objects.filter_by_foia(foia, user)
+        open_tasks = [task for task in all_tasks if not task.resolved]
+        context['task_count'] = len(all_tasks)
+        context['open_task_count'] = len(open_tasks)
+        context['open_tasks'] = open_tasks
+        context['stripe_pk'] = settings.STRIPE_PUB_KEY
         context['sidebar_admin_url'] = reverse('admin:foia_foiarequest_change', args=(foia.pk,))
         context['is_thankable'] = foia.is_thankable()
         if foia.sidebar_html:
@@ -290,6 +302,7 @@ class Detail(DetailView):
         actions = {
             'status': self._status,
             'tags': self._tags,
+            'projects': self._projects,
             'follow_up': self._follow_up,
             'thanks': self._thank,
             'question': self._question,
@@ -306,6 +319,7 @@ class Detail(DetailView):
             'revoke_access': self._revoke_access,
             'demote': self._demote_editor,
             'promote': self._promote_viewer,
+            'update_new_agency': self._update_new_agency,
         }
         try:
             return actions[request.POST['action']](request, foia)
@@ -319,14 +333,21 @@ class Detail(DetailView):
             foia.update_tags(request.POST.get('tags'))
         return redirect(foia)
 
-    # pylint: disable=line-too-long
+    def _projects(self, request, foia):
+        """Handle updating projects"""
+        form = ProjectManagerForm(request.POST)
+        if (foia.editable_by(request.user) or request.user.is_staff) and form.is_valid():
+            projects = form.cleaned_data['projects']
+            foia.projects = projects
+        return redirect(foia)
+
     def _status(self, request, foia):
         """Handle updating status"""
         status = request.POST.get('status')
         old_status = foia.get_status_display()
-        if foia.status not in ['started', 'submitted'] and \
-                ((foia.editable_by(request.user) and status in [s for s, _ in STATUS_NODRAFT]) or
-                 (request.user.is_staff and status in [s for s, _ in STATUS])):
+        user_editable = foia.editable_by(request.user) and status in [s for s, _ in STATUS_NODRAFT]
+        staff_editable = request.user.is_staff and status in [s for s, _ in STATUS]
+        if foia.status not in ['started', 'submitted'] and (user_editable or staff_editable):
             foia.status = status
             foia.save()
             StatusChangeTask.objects.create(
@@ -441,6 +462,19 @@ class Detail(DetailView):
                 messages.success(request, 'Successfully changed the estimated completion date.')
             else:
                 messages.error(request, 'Invalid date provided.')
+        else:
+            messages.error(request, 'You cannot do that, stop it.')
+        return redirect(foia)
+
+    def _update_new_agency(self, request, foia):
+        """Update the new agency"""
+        form = AgencyForm(request.POST, instance=foia.agency)
+        if foia.editable_by(request.user):
+            if form.is_valid():
+                form.save()
+                messages.success(request, 'Agency info saved. Thanks for your help!')
+            else:
+                messages.success(request, 'The data was invalid! Try again.')
         else:
             messages.error(request, 'You cannot do that, stop it.')
         return redirect(foia)

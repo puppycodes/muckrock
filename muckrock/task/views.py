@@ -5,7 +5,7 @@ Views for the Task application
 from django.contrib import messages
 from django.contrib.auth.decorators import user_passes_test
 from django.core.urlresolvers import resolve
-from django.db.models import Count, Prefetch, Q
+from django.db.models import Count, Prefetch, Q, Max
 from django.http import HttpResponse, Http404
 from django.shortcuts import redirect, get_object_or_404
 from django.utils.decorators import method_decorator
@@ -13,15 +13,17 @@ from django.utils.decorators import method_decorator
 import logging
 
 from muckrock.agency.forms import AgencyForm
-from muckrock.agency.models import Agency
+from muckrock.agency.models import Agency, STALE_DURATION
 from muckrock.foia.models import STATUS, FOIARequest, FOIACommunication, FOIAFile
-from muckrock.task.forms import TaskFilterForm, FlaggedTaskForm, ResponseTaskForm
+from muckrock.models import ExtractDay, Now
+from muckrock.task.forms import (
+    TaskFilterForm, FlaggedTaskForm, StaleAgencyTaskForm, ResponseTaskForm
+    )
 from muckrock.task.models import (
-        Task, OrphanTask, SnailMailTask, RejectedEmailTask,
-        StaleAgencyTask, FlaggedTask, NewAgencyTask, ResponseTask,
-        PaymentTask, GenericCrowdfundTask, MultiRequestTask,
-        StatusChangeTask, FailedFaxTask
-        )
+    Task, OrphanTask, SnailMailTask, RejectedEmailTask,
+    StaleAgencyTask, FlaggedTask, NewAgencyTask, ResponseTask,
+    CrowdfundTask, MultiRequestTask, StatusChangeTask, FailedFaxTask
+    )
 from muckrock.views import MRFilterableListView
 
 # pylint:disable=missing-docstring
@@ -29,21 +31,21 @@ from muckrock.views import MRFilterableListView
 def count_tasks():
     """Counts all unresolved tasks and adds them to a dictionary"""
     count = Task.objects.filter(resolved=False).aggregate(
-            all=Count('id'),
-            orphan=Count('orphantask'),
-            snail_mail=Count('snailmailtask'),
-            rejected=Count('rejectedemailtask'),
-            stale_agency=Count('staleagencytask'),
-            flagged=Count('flaggedtask'),
-            new_agency=Count('newagencytask'),
-            response=Count('responsetask'),
-            status_change=Count('statuschangetask'),
-            payment=Count('paymenttask'),
-            crowdfund=Count('genericcrowdfundtask'),
-            multirequest=Count('multirequesttask'),
-            failed_fax=Count('failedfaxtask'),
-            )
+        all=Count('id'),
+        orphan=Count('orphantask'),
+        snail_mail=Count('snailmailtask'),
+        rejected=Count('rejectedemailtask'),
+        stale_agency=Count('staleagencytask'),
+        flagged=Count('flaggedtask'),
+        new_agency=Count('newagencytask'),
+        response=Count('responsetask'),
+        status_change=Count('statuschangetask'),
+        crowdfund=Count('crowdfundtask'),
+        multirequest=Count('multirequesttask'),
+        failed_fax=Count('failedfaxtask'),
+        )
     return count
+
 
 class TaskList(MRFilterableListView):
     """List of tasks"""
@@ -140,7 +142,7 @@ class TaskList(MRFilterableListView):
 class OrphanTaskList(TaskList):
     title = 'Orphans'
     queryset = (OrphanTask.objects
-            .select_related('communication__likely_foia')
+            .select_related('communication__likely_foia__jurisdiction')
             .prefetch_related('communication__files'))
     bulk_actions = ['reject']
 
@@ -172,34 +174,43 @@ class SnailMailTaskList(TaskList):
             .select_related(
                 'communication__foia__agency',
                 'communication__foia__user',
+                'communication__foia__jurisdiction',
                 )
             .prefetch_related(
                 Prefetch(
                     'communication__foia__communications',
-                    queryset=FOIACommunication.objects.order_by('-date'),
-                    to_attr='reverse_communications'),
+                    queryset=FOIACommunication.objects.filter(response=True),
+                    to_attr='has_ack'),
                 Prefetch(
                     'communication__foia__communications',
-                    queryset=FOIACommunication.objects.filter(response=True),
-                    to_attr='replies'),
-                ))
+                    queryset=FOIACommunication.objects.order_by('-date'),
+                    to_attr='reverse_communications'),
+                )
+            )
 
     def task_post_helper(self, request, task):
         """Special post helper exclusive to SnailMailTasks"""
+        # we should always set the status of a request when resolving
+        # a snail mail task so that the request leaves processing status
         if request.POST.get('status'):
             status = request.POST.get('status')
             if status in dict(STATUS):
                 task.set_status(status)
-                task.resolve(request.user)
             # updating the date is an option and not an action
             if request.POST.get('update_date'):
                 task.update_date()
+        # if the task is in the payment category and we're given a check
+        # number, then we should record the existence of this check
+        if request.POST.get('check_number') and task.category == 'p':
+            check_number = int(request.POST.get('check_number'))
+            task.record_check(check_number, request.user)
+        task.resolve(request.user)
         return
 
 
 class RejectedEmailTaskList(TaskList):
     title = 'Rejected Emails'
-    queryset = RejectedEmailTask.objects.select_related('foia')
+    queryset = RejectedEmailTask.objects.select_related('foia__jurisdiction')
 
     def get_context_data(self, **kwargs):
         """Prefetch the agencies and foias sharing an email"""
@@ -213,6 +224,7 @@ class RejectedEmailTaskList(TaskList):
         statuses = ('ack', 'processed', 'appealing', 'fix', 'payment')
         foias = (FOIARequest.objects.filter(email_filter)
                 .filter(status__in=statuses)
+                .select_related('jurisdiction')
                 .order_by())
         def seperate_by_email(objects, emails):
             """Make a dictionary of each email to the objects having that email"""
@@ -223,20 +235,52 @@ class RejectedEmailTaskList(TaskList):
                         email_upper == o.email.upper() or
                         email_upper in o.other_emails.upper()]
             return return_value
-        context['agency_by_email'] = seperate_by_email(agencies, all_emails)
-        context['foia_by_email'] = seperate_by_email(foias, all_emails)
+        agency_by_email = seperate_by_email(agencies, all_emails)
+        foia_by_email = seperate_by_email(foias, all_emails)
+        for task in context['object_list']:
+            task.foias = foia_by_email[task.email]
+            task.agencies = agency_by_email[task.email]
         return context
 
 
 class StaleAgencyTaskList(TaskList):
     title = 'Stale Agencies'
-    queryset = StaleAgencyTask.objects.select_related('agency')
+    queryset = (StaleAgencyTask.objects
+            .select_related('agency')
+            .prefetch_related(
+                'agency__foiarequest_set__communications__foia__jurisdiction',
+                Prefetch('agency__foiarequest_set',
+                    queryset=FOIARequest.objects
+                    .get_open()
+                    .select_related('jurisdiction')
+                    .filter(communications__response=True)
+                    .annotate(latest_response=ExtractDay(
+                        Now() - Max('communications__date')))
+                    .filter(latest_response__gte=STALE_DURATION)
+                    .order_by('-latest_response'),
+                    to_attr='stale_requests_'),
+                ))
+
+    def task_post_helper(self, request, task):
+        """Check the new email is valid and, if so, apply it"""
+        if request.POST.get('update'):
+            email_form = StaleAgencyTaskForm(request.POST)
+            if email_form.is_valid():
+                new_email = email_form.cleaned_data['email']
+                foia_pks = request.POST.getlist('foia')
+                foias = FOIARequest.objects.filter(pk__in=foia_pks)
+                task.update_email(new_email, foias)
+            else:
+                messages.error(request, 'The email is invalid.')
+                return
+        if request.POST.get('resolve'):
+            task.resolve(request.user)
 
 
 class FlaggedTaskList(TaskList):
     title = 'Flagged'
     queryset = FlaggedTask.objects.select_related(
-            'user', 'foia', 'agency', 'jurisdiction')
+            'user', 'foia__jurisdiction', 'agency', 'jurisdiction')
 
     def task_post_helper(self, request, task):
         """Special post handler for FlaggedTasks"""
@@ -251,18 +295,10 @@ class FlaggedTaskList(TaskList):
         if request.POST.get('resolve'):
             task.resolve(request.user)
 
+
 class NewAgencyTaskList(TaskList):
     title = 'New Agencies'
-    queryset = (NewAgencyTask.objects
-            .select_related('agency__jurisdiction')
-            .prefetch_related(
-                Prefetch('agency__foiarequest_set',
-                    queryset=FOIARequest.objects.select_related('jurisdiction')),
-                Prefetch('agency__jurisdiction__agencies',
-                    queryset=Agency.objects
-                    .filter(status='approved')
-                    .order_by('name'),
-                    to_attr='other_agencies')))
+    queryset = NewAgencyTask.objects.preload_list()
 
     def task_post_helper(self, request, task):
         """Special post handlers exclusive to NewAgencyTasks"""
@@ -286,12 +322,15 @@ class NewAgencyTaskList(TaskList):
 class ResponseTaskList(TaskList):
     title = 'Responses'
     queryset = (ResponseTask.objects
-            .select_related('communication__foia')
+            .select_related('communication__foia__agency')
+            .select_related('communication__foia__jurisdiction')
             .prefetch_related(
                 Prefetch('communication__files',
                     queryset=FOIAFile.objects.select_related('foia__jurisdiction')),
                 Prefetch('communication__foia__communications',
-                    queryset=FOIACommunication.objects.order_by('-date'),
+                    queryset=FOIACommunication.objects
+                        .order_by('-date')
+                        .prefetch_related('files'),
                     to_attr='reverse_communications'),
                 ))
 
@@ -349,18 +388,13 @@ class ResponseTaskList(TaskList):
 
 class StatusChangeTaskList(TaskList):
     title = 'Status Change'
-    queryset = StatusChangeTask.objects.select_related('user', 'foia')
-
-
-class PaymentTaskList(TaskList):
-    title = 'Payments'
-    queryset = PaymentTask.objects.select_related('user', 'foia')
+    queryset = StatusChangeTask.objects.select_related(
+            'user', 'foia__jurisdiction')
 
 
 class CrowdfundTaskList(TaskList):
     title = 'Crowdfunds'
-    # generic FKs are problematic (can't select related on foia/project)
-    queryset = GenericCrowdfundTask.objects.prefetch_related('crowdfund')
+    queryset = CrowdfundTask.objects.select_related('crowdfund')
 
 
 class MultiRequestTaskList(TaskList):
@@ -375,6 +409,7 @@ class FailedFaxTaskList(TaskList):
     queryset = (FailedFaxTask.objects
             .select_related('communication__foia__agency')
             .select_related('communication__foia__user')
+            .select_related('communication__foia__jurisdiction')
             .prefetch_related(
                 Prefetch(
                     'communication__foia__communications',
@@ -389,13 +424,15 @@ class RequestTaskList(TaskList):
 
     def get_queryset(self):
         # pylint: disable=attribute-defined-outside-init
+        # pylint: disable=unsubscriptable-object
         self.foia_request = get_object_or_404(
                 FOIARequest.objects.select_related(
                     'agency__jurisdiction',
                     'jurisdiction__parent__parent',
                     'user__profile'),
                 pk=self.kwargs['pk'])
-        tasks = Task.objects.filter_by_foia(self.foia_request)
+        user = self.request.user
+        tasks = Task.objects.filter_by_foia(self.foia_request, user)
         return tasks
 
     def get_context_data(self, **kwargs):

@@ -8,25 +8,28 @@ from django.core import mail
 from django.test import TestCase, RequestFactory
 
 import datetime
-from mock import Mock
-import nose.tools
-import re
 from datetime import date as real_date
+import nose.tools
 from operator import attrgetter
+import re
 
-from muckrock.factories import UserFactory, FOIARequestFactory
+from muckrock.factories import UserFactory, FOIARequestFactory, ProjectFactory
 from muckrock.foia.models import FOIARequest, FOIACommunication
 from muckrock.foia.views import Detail
 from muckrock.agency.models import Agency
 from muckrock.jurisdiction.models import Jurisdiction
+from muckrock.project.forms import ProjectManagerForm
 from muckrock.task.models import SnailMailTask
 from muckrock.tests import get_allowed, post_allowed, get_post_unallowed, get_404
+from muckrock.utils import mock_middleware
+
+ok_ = nose.tools.ok_
+eq_ = nose.tools.eq_
 
 # allow methods that could be functions and too many public methods in tests
 # pylint: disable=no-self-use
 # pylint: disable=too-many-public-methods
 # pylint: disable=too-many-lines
-# pylint: disable=no-member
 # pylint: disable=invalid-name
 # pylint: disable=bad-mcs-method-argument
 
@@ -38,7 +41,6 @@ class TestFOIARequestUnit(TestCase):
 
     def setUp(self):
         """Set up tests"""
-        # pylint: disable=C0103
 
         mail.outbox = []
 
@@ -200,8 +202,7 @@ class TestFOIAFunctional(TestCase):
     def test_foia_list(self):
         """Test the foia-list view"""
 
-        response = get_allowed(self.client, reverse('foia-list'),
-                ['lists/request_list.html', 'lists/base_list.html'])
+        response = get_allowed(self.client, reverse('foia-list'))
         nose.tools.eq_(set(response.context['object_list']),
             set(FOIARequest.objects.get_viewable(AnonymousUser()).order_by('-date_submitted')[:12]))
 
@@ -210,8 +211,7 @@ class TestFOIAFunctional(TestCase):
 
         for user_pk in [1, 2]:
             response = get_allowed(self.client,
-                                   reverse('foia-list-user', kwargs={'user_pk': user_pk}),
-                                   ['lists/request_list.html', 'lists/base_list.html'])
+                    reverse('foia-list-user', kwargs={'user_pk': user_pk}))
             user = User.objects.get(pk=user_pk)
             nose.tools.eq_(set(response.context['object_list']),
                            set(FOIARequest.objects.get_viewable(AnonymousUser()).filter(user=user)))
@@ -223,16 +223,14 @@ class TestFOIAFunctional(TestCase):
         for field in ['title', 'date_submitted', 'status']:
             for order in ['asc', 'desc']:
                 response = get_allowed(self.client, reverse('foia-list') +
-                                       '?sort=%s&order=%s' % (field, order),
-                                       ['lists/request_list.html', 'lists/base_list.html'])
+                        '?sort=%s&order=%s' % (field, order))
                 nose.tools.eq_([f.title for f in response.context['object_list']],
                                [f.title for f in sorted(response.context['object_list'],
                                                         key=attrgetter(field),
                                                         reverse=(order == 'desc'))])
     def test_foia_bad_sort(self):
         """Test sorting against a non-existant field"""
-        response = get_allowed(self.client, reverse('foia-list') + '?sort=test',
-                               ['lists/request_list.html', 'lists/base_list.html'])
+        response = get_allowed(self.client, reverse('foia-list') + '?sort=test')
         nose.tools.eq_(response.status_code, 200)
 
     def test_foia_detail(self):
@@ -240,11 +238,10 @@ class TestFOIAFunctional(TestCase):
 
         foia = FOIARequest.objects.get(pk=2)
         get_allowed(self.client,
-                    reverse('foia-detail', kwargs={'idx': foia.pk, 'slug': foia.slug,
-                                                   'jurisdiction': foia.jurisdiction.slug,
-                                                   'jidx': foia.jurisdiction.pk}),
-                    ['foia/detail.html', 'base.html'],
-                    context={'foia': foia})
+                    reverse('foia-detail',
+                        kwargs={'idx': foia.pk, 'slug': foia.slug,
+                            'jurisdiction': foia.jurisdiction.slug,
+                            'jidx': foia.jurisdiction.pk}))
 
     def test_feeds(self):
         """Test the RSS feed views"""
@@ -278,14 +275,12 @@ class TestFOIAFunctional(TestCase):
         self.client.login(username='adam', password='abc')
 
         # get authenticated pages
-        get_allowed(self.client, reverse('foia-create'),
-                    ['forms/foia/create.html'])
+        get_allowed(self.client, reverse('foia-create'))
 
         get_allowed(self.client, reverse('foia-draft',
-                                    kwargs={'jurisdiction': foia.jurisdiction.slug,
-                                            'jidx': foia.jurisdiction.pk,
-                                            'idx': foia.pk, 'slug': foia.slug}),
-                    ['forms/foia/draft.html', 'forms/base_form.html'])
+            kwargs={'jurisdiction': foia.jurisdiction.slug,
+                'jidx': foia.jurisdiction.pk,
+                'idx': foia.pk, 'slug': foia.slug}))
 
         get_404(self.client, reverse('foia-draft',
                                 kwargs={'jurisdiction': foia.jurisdiction.slug,
@@ -331,9 +326,9 @@ class TestFOIAFunctional(TestCase):
         kwargs = {'jurisdiction': foia.jurisdiction.slug,
                   'jidx': foia.jurisdiction.pk,
                   'idx': foia.pk, 'slug': foia.slug}
-        draft = reverse('foia-draft', kwargs=kwargs)
-        detail = reverse('foia-detail', kwargs=kwargs)
-        chain = [('http://testserver' + url, 302) for url in (detail, draft)]
+        draft = reverse('foia-draft', kwargs=kwargs).replace('http://testserver', '')
+        detail = reverse('foia-detail', kwargs=kwargs).replace('http://testserver', '')
+        chain = [(url, 302) for url in (detail, draft)]
         response = self.client.post(draft, foia_data, follow=True)
         nose.tools.eq_(response.status_code, 200)
         nose.tools.eq_(response.redirect_chain, chain)
@@ -350,10 +345,9 @@ class TestFOIAFunctional(TestCase):
 
         foia = FOIARequest.objects.get(pk=18)
         get_allowed(self.client, reverse('foia-pay',
-                                    kwargs={'jurisdiction': foia.jurisdiction.slug,
-                                            'jidx': foia.jurisdiction.pk,
-                                            'idx': foia.pk, 'slug': foia.slug}),
-                    ['foia/detail.html', 'base.html'])
+            kwargs={'jurisdiction': foia.jurisdiction.slug,
+                'jidx': foia.jurisdiction.pk,
+                'idx': foia.pk, 'slug': foia.slug}))
 
 
 class TestFOIAIntegration(TestCase):
@@ -365,9 +359,7 @@ class TestFOIAIntegration(TestCase):
 
     def setUp(self):
         """Set up tests"""
-        # pylint: disable=C0103
         # pylint: disable=bad-super-call
-        # pylint: disable=C0111
 
         mail.outbox = []
 
@@ -376,6 +368,7 @@ class TestFOIAIntegration(TestCase):
         # Replace real date and time with mock ones so we can control today's/now's value
         # Unfortunately need to monkey patch this a lot of places, and it gets rather ugly
         #http://tech.yunojuno.com/mocking-dates-with-django
+        # pylint: disable=missing-docstring
         class MockDate(datetime.date):
             def __add__(self, other):
                 d = super(MockDate, self).__add__(other)
@@ -412,7 +405,6 @@ class TestFOIAIntegration(TestCase):
 
     def tearDown(self):
         """Tear down tests"""
-        # pylint: disable=C0103
 
         import muckrock.foia.models
 
@@ -551,16 +543,10 @@ class TestFOIANotes(TestCase):
         self.note_text = u'Lorem ipsum dolor su ament.'
         self.note_data = {'action': 'add_note', 'note': self.note_text}
 
-    def mockMiddleware(self, request):
-        """Mocks the request with messages and session middleware"""
-        setattr(request, 'session', Mock())
-        setattr(request, '_messages', Mock())
-        return request
-
     def test_add_note(self):
         """User with edit permission should be able to create a note."""
         request = self.factory.post(self.foia.get_absolute_url(), self.note_data)
-        request = self.mockMiddleware(request)
+        request = mock_middleware(request)
         request.user = self.editor
         response = Detail.as_view()(
             request,
@@ -576,7 +562,7 @@ class TestFOIANotes(TestCase):
     def test_add_note_without_permission(self):
         """Normies and viewers cannot add notes."""
         request = self.factory.post(self.foia.get_absolute_url(), self.note_data)
-        request = self.mockMiddleware(request)
+        request = mock_middleware(request)
         request.user = self.viewer
         response = Detail.as_view()(
             request,
@@ -588,6 +574,72 @@ class TestFOIANotes(TestCase):
         self.foia.refresh_from_db()
         nose.tools.eq_(response.status_code, 302)
         nose.tools.assert_true(self.foia.notes.count() == 0)
+
+
+class TestRequestDetailView(TestCase):
+    """Request detail views support a wide variety of interactions"""
+
+    def setUp(self):
+        self.foia = FOIARequestFactory()
+        self.request_factory = RequestFactory()
+        self.view = Detail.as_view()
+        self.url = self.foia.get_absolute_url()
+
+    def post_helper(self, data, user):
+        """Returns post responses"""
+        request = self.request_factory.post(self.url, data)
+        request.user = user
+        request = mock_middleware(request)
+        return self.view(
+            request,
+            jurisdiction=self.foia.jurisdiction.slug,
+            jidx=self.foia.jurisdiction.id,
+            slug=self.foia.slug,
+            idx=self.foia.id
+        )
+
+    def test_add_tags(self):
+        """Posting a collection of tags to a request should update its tags."""
+        tags = 'foo, bar'
+        self.post_helper({'action': 'tags', 'tags': tags}, self.foia.user)
+        self.foia.refresh_from_db()
+        ok_('foo' in [tag.name for tag in self.foia.tags.all()])
+        ok_('bar' in [tag.name for tag in self.foia.tags.all()])
+
+    def test_add_projects(self):
+        """Posting a collection of projects to a request should add it to those projects."""
+        project = ProjectFactory()
+        form = ProjectManagerForm({'projects': [project.pk]})
+        ok_(form.is_valid())
+        data = {'action': 'projects'}
+        data.update(form.data)
+        self.post_helper(data, self.foia.user)
+        project.refresh_from_db()
+        ok_(self.foia in project.requests.all())
+
+
+class TestRequestPayment(TestCase):
+    """Allow users to pay fees on a request"""
+    def setUp(self):
+        self.foia = FOIARequestFactory()
+
+    def test_make_payment(self):
+        """The request should accept payments for request fees."""
+        user = self.foia.user
+        amount = 100.0
+        comm = self.foia.pay(user, amount)
+        self.foia.refresh_from_db()
+        eq_(self.foia.status, 'submitted',
+            'The request should be set to processing.')
+        eq_(self.foia.date_processing, datetime.date.today(),
+            'The request should start tracking its days processing.')
+        ok_(comm, 'The function should return a communication.')
+        eq_(comm.delivered, 'mail', 'The communication should be mailed.')
+        task = SnailMailTask.objects.filter(communication=comm).first()
+        ok_(task, 'A snail mail task should be created.')
+        eq_(task.user, user, 'The task should be attributed to the user.')
+        eq_(task.amount, amount, 'The task should contain the amount of the request.')
+
 
 class TestRequestSharing(TestCase):
     """Allow people to edit and view another user's request."""
@@ -698,17 +750,10 @@ class TestRequestSharingViews(TestCase):
         self.foia.add_viewer(self.viewer)
         self.foia.save()
 
-    def mockMiddleware(self, request):
-        """Mocks the request with messages and session middleware"""
-        setattr(request, 'session', Mock())
-        setattr(request, '_messages', Mock())
-        return request
-
     def reset_access_key(self):
         """Simple helper to reset access key betweeen tests"""
         self.foia.access_key = None
         nose.tools.assert_false(self.foia.access_key)
-        return
 
     def test_access_key_allowed(self):
         """
@@ -718,7 +763,7 @@ class TestRequestSharingViews(TestCase):
         self.reset_access_key()
         data = {'action': 'generate_key'}
         request = self.factory.post(self.foia.get_absolute_url(), data)
-        request = self.mockMiddleware(request)
+        request = mock_middleware(request)
         # editors should be able to generate the key
         request.user = self.editor
         response = Detail.as_view()(
@@ -750,7 +795,7 @@ class TestRequestSharingViews(TestCase):
         self.reset_access_key()
         data = {'action': 'generate_key'}
         request = self.factory.post(self.foia.get_absolute_url(), data)
-        request = self.mockMiddleware(request)
+        request = mock_middleware(request)
         # viewers should not be able to generate the key
         request.user = self.viewer
         response = Detail.as_view()(
@@ -787,7 +832,7 @@ class TestRequestSharingViews(TestCase):
             'access': 'edit'
         }
         edit_request = self.factory.post(self.foia.get_absolute_url(), edit_data)
-        edit_request = self.mockMiddleware(edit_request)
+        edit_request = mock_middleware(edit_request)
         edit_request.user = self.editor
         edit_response = Detail.as_view()(
             edit_request,
@@ -809,7 +854,7 @@ class TestRequestSharingViews(TestCase):
             'access': 'view'
         }
         view_request = self.factory.post(self.foia.get_absolute_url(), view_data)
-        view_request = self.mockMiddleware(view_request)
+        view_request = mock_middleware(view_request)
         view_request.user = self.editor
         view_response = Detail.as_view()(
             view_request,
@@ -831,7 +876,7 @@ class TestRequestSharingViews(TestCase):
             'user': user.pk
         }
         request = self.factory.post(self.foia.get_absolute_url(), data)
-        request = self.mockMiddleware(request)
+        request = mock_middleware(request)
         request.user = self.editor
         response = Detail.as_view()(
             request,
@@ -854,7 +899,7 @@ class TestRequestSharingViews(TestCase):
             'user': user.pk
         }
         request = self.factory.post(self.foia.get_absolute_url(), data)
-        request = self.mockMiddleware(request)
+        request = mock_middleware(request)
         request.user = self.editor
         response = Detail.as_view()(
             request,
@@ -876,7 +921,7 @@ class TestRequestSharingViews(TestCase):
             'user': an_editor.pk
         }
         request = self.factory.post(self.foia.get_absolute_url(), data)
-        request = self.mockMiddleware(request)
+        request = mock_middleware(request)
         request.user = self.editor
         response = Detail.as_view()(
             request,
@@ -897,7 +942,7 @@ class TestRequestSharingViews(TestCase):
             'user': a_viewer.pk
         }
         request = self.factory.post(self.foia.get_absolute_url(), data)
-        request = self.mockMiddleware(request)
+        request = mock_middleware(request)
         request.user = self.editor
         response = Detail.as_view()(
             request,

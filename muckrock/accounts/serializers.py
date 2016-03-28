@@ -36,7 +36,6 @@ class StatisticsSerializer(serializers.ModelSerializer):
     """Serializer for Statistics model"""
 
     def __init__(self, *args, **kwargs):
-        # pylint: disable=no-member
         # pylint: disable=super-on-old-class
         super(StatisticsSerializer, self).__init__(*args, **kwargs)
         if 'request' not in self.context or not self.context['request'].user.is_staff:
@@ -47,6 +46,9 @@ class StatisticsSerializer(serializers.ModelSerializer):
                     'daily_requests_pro',
                     'daily_requests_basic',
                     'daily_requests_beta',
+                    'daily_requests_proxy',
+                    'daily_requests_admin',
+                    'daily_requests_org',
                     'daily_articles',
                     'total_tasks',
                     'total_unresolved_tasks',
@@ -72,6 +74,10 @@ class StatisticsSerializer(serializers.ModelSerializer):
                     'total_unresolved_payment_tasks',
                     'total_crowdfundpayment_tasks',
                     'total_unresolved_crowdfundpayment_tasks',
+                    'daily_robot_response_tasks',
+                    'admin_notes',
+                    'total_active_org_members',
+                    'total_active_orgs',
                     )
             for field in staff_only:
                 self.fields.pop(field)
@@ -103,6 +109,9 @@ class StatisticsSerializer(serializers.ModelSerializer):
                 'daily_requests_pro',
                 'daily_requests_basic',
                 'daily_requests_beta',
+                'daily_requests_proxy',
+                'daily_requests_admin',
+                'daily_requests_org',
                 'daily_articles',
                 'total_tasks',
                 'total_unresolved_tasks',
@@ -128,5 +137,10 @@ class StatisticsSerializer(serializers.ModelSerializer):
                 'total_unresolved_payment_tasks',
                 'total_crowdfundpayment_tasks',
                 'total_unresolved_crowdfundpayment_tasks',
+                'daily_robot_response_tasks',
+                'public_notes',
+                'admin_notes',
+                'total_active_org_members',
+                'total_active_orgs',
                 )
 

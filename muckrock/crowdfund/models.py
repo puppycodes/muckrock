@@ -3,6 +3,7 @@ Models for the crowdfund application
 """
 
 from django.contrib.auth.models import User
+from django.core.urlresolvers import reverse
 from django.db import models
 from django.db.models import Q
 
@@ -12,17 +13,13 @@ from decimal import Decimal
 import logging
 import stripe
 
-from muckrock.foia.models import FOIARequest
 from muckrock import task
 
 stripe.api_version = '2015-10-16'
 
-class CrowdfundABC(models.Model):
-    """Abstract base class for crowdfunding objects"""
-    # pylint: disable=too-few-public-methods, model-missing-unicode
-    class Meta:
-        abstract = True
 
+class Crowdfund(models.Model):
+    """Crowdfunding campaign"""
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     payment_capped = models.BooleanField(default=False)
@@ -39,13 +36,24 @@ class CrowdfundABC(models.Model):
     date_due = models.DateField()
     closed = models.BooleanField(default=False)
 
+    def __unicode__(self):
+        return self.name
+
+    def get_absolute_url(self):
+        """The url for this object"""
+        return reverse('crowdfund', kwargs={'pk': self.pk})
+
     def expired(self):
         """Has this crowdfund run out of time?"""
         return date.today() >= self.date_due or self.closed
 
     def amount_remaining(self):
-        """Reports the amount still needed to be raised"""
+        """Reports the amount still needed to be raised as a decimal."""
         return Decimal(self.payment_required) - Decimal(self.payment_received)
+
+    def percent_funded(self):
+        """Reports the percent of the amount required that has been funded."""
+        return int(self.payment_received/self.payment_required * 100)
 
     def update_payment_received(self):
         """Combine the amounts of all the payments"""
@@ -64,7 +72,7 @@ class CrowdfundABC(models.Model):
         """Close the crowdfund and create a new task for it once it reaches its goal."""
         self.closed = True
         self.save()
-        task.models.GenericCrowdfundTask.objects.create(crowdfund=self)
+        task.models.CrowdfundTask.objects.create(crowdfund=self)
         verb = 'ended'
         if succeeded:
             logging.info('Crowdfund %d reached its goal.', self.id)
@@ -83,22 +91,18 @@ class CrowdfundABC(models.Model):
     def named_contributors(self):
         """Return unique named contributors only."""
         # returns the list of a set of a list to remove duplicates
-        payment_name = self.get_crowdfund_payment_object().__name__.lower()
-        params = {
-                payment_name + '__crowdfund': self,
-                payment_name + '__show': True,
-                }
-        return User.objects.filter(**params).distinct()
-
-    def get_crowdfund_payment_object(self):
-        """Return the crowdfund payment object. Should be implemented by subclasses."""
-        # pylint:disable=no-self-use
-        raise NotImplementedError
+        return User.objects.filter(
+                crowdfundpayment__crowdfund=self,
+                crowdfundpayment__show=True).distinct()
 
     def get_crowdfund_object(self):
-        """Return the object being crowdfunded. Should be implemented by subclasses."""
-        # pylint:disable=no-self-use
-        raise NotImplementedError
+        """Is this for a request or a project?"""
+        if hasattr(self, 'foia'):
+            return self.foia
+        elif self.project:
+            return self.project
+        else:
+            raise ValueError('Exactly one of foia or project should be set')
 
     def make_payment(self, token, email, amount, show=False, user=None):
         """Creates a payment for the crowdfund"""
@@ -121,8 +125,7 @@ class CrowdfundABC(models.Model):
                 'crowdfund_name': self.name
             }
         )
-        payment_object = self.get_crowdfund_payment_object()
-        payment = payment_object.objects.create(
+        payment = CrowdfundPayment.objects.create(
             amount=amount,
             crowdfund=self,
             user=user,
@@ -133,74 +136,28 @@ class CrowdfundABC(models.Model):
         self.update_payment_received()
         return payment
 
-class CrowdfundPaymentABC(models.Model):
-    """Abstract base class for crowdfunding objects"""
-    # pylint: disable=too-few-public-methods, model-missing-unicode
+    @property
+    def project(self):
+        """Get the project for this crowdfund if it exists"""
+        # there will never be more than one project due to unique constraint
+        projects = self.projects.all()
+        if projects:
+            return projects[0]
+        else:
+            return None
+
+
+class CrowdfundPayment(models.Model):
+    """A payment toward a crowdfund campaign"""
     user = models.ForeignKey(User, blank=True, null=True)
     name = models.CharField(max_length=255, blank=True)
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     date = models.DateTimeField(auto_now_add=True)
     show = models.BooleanField(default=False)
     charge_id = models.CharField(max_length=255, blank=True)
-
-    class Meta:
-        abstract = True
-
-class CrowdfundRequest(CrowdfundABC):
-    """Keep track of crowdfunding for a request"""
-    type_ = 'foia'
-    foia = models.OneToOneField(FOIARequest, related_name='crowdfund')
+    crowdfund = models.ForeignKey(Crowdfund, related_name='payments')
 
     def __unicode__(self):
-        # pylint: disable=no-member
-        return u'Crowdfunding for %s' % self.foia.title
-
-    @models.permalink
-    def get_absolute_url(self):
-        """The url for this object"""
-        return ('crowdfund-request', [], {'pk': self.pk})
-
-    def get_crowdfund_payment_object(self):
-        return CrowdfundRequestPayment
-
-    def get_crowdfund_object(self):
-        return self.foia
-
-class CrowdfundRequestPayment(CrowdfundPaymentABC):
-    """M2M intermediate model"""
-    crowdfund = models.ForeignKey(CrowdfundRequest, related_name='payments')
-
-    def __unicode__(self):
-        # pylint: disable=no-member
-        return u'Payment of $%.2f by %s on %s for %s' % \
-            (self.amount, self.user, self.date.date(), self.crowdfund.foia)
-
-class CrowdfundProject(CrowdfundABC):
-    """A crowdfunding campaign for a project."""
-    type_ = 'project'
-    project = models.ForeignKey('project.Project', related_name='crowdfund')
-
-    def __unicode__(self):
-        # pylint: disable=no-member
-        return u'Crowdfunding for %s' % self.project.title
-
-    @models.permalink
-    def get_absolute_url(self):
-        """The url for this object"""
-        return ('crowdfund-project', [], {'pk': self.pk})
-
-    def get_crowdfund_payment_object(self):
-        return CrowdfundProjectPayment
-
-    def get_crowdfund_object(self):
-        return self.project
-
-
-class CrowdfundProjectPayment(CrowdfundPaymentABC):
-    """Individual payments made to a project crowdfund"""
-    crowdfund = models.ForeignKey(CrowdfundProject, related_name='payments')
-
-    def __unicode__(self):
-        # pylint: disable=no-member
-        return u'Payment of $%.2f by %s on %s for %s' % \
-            (self.amount, self.user, self.date.date(), self.crowdfund.project)
+        return (u'Payment of $%.2f by %s on %s for %s' %
+            (self.amount, self.user, self.date.date(),
+                self.crowdfund.get_crowdfund_object()))

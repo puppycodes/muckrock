@@ -8,10 +8,13 @@ from django.template.defaultfilters import slugify
 from django.utils.safestring import mark_safe
 
 from datetime import date
+from djgeojson.fields import PointField
 from easy_thumbnails.fields import ThumbnailerImageField
 
 from muckrock.jurisdiction.models import Jurisdiction, RequestHelper
 from muckrock import fields
+
+STALE_DURATION = 120
 
 class AgencyType(models.Model):
     """Marks an agency as fufilling requests of this type for its jurisdiction"""
@@ -49,7 +52,6 @@ class Agency(models.Model, RequestHelper):
     slug = models.SlugField(max_length=255)
     jurisdiction = models.ForeignKey(Jurisdiction, related_name='agencies')
     types = models.ManyToManyField(AgencyType, blank=True)
-    approved = models.BooleanField(default=False)
     status = models.CharField(choices=(
         ('pending', 'Pending'),
         ('approved', 'Approved'),
@@ -58,6 +60,7 @@ class Agency(models.Model, RequestHelper):
     user = models.ForeignKey(User, null=True, blank=True)
     appeal_agency = models.ForeignKey('self', null=True, blank=True)
     can_email_appeals = models.BooleanField(default=False)
+    payable_to = models.ForeignKey('self', related_name='receivable', null=True, blank=True)
     image = ThumbnailerImageField(
         upload_to='agency_images',
         blank=True,
@@ -68,6 +71,7 @@ class Agency(models.Model, RequestHelper):
     public_notes = models.TextField(blank=True, help_text='May use html')
     stale = models.BooleanField(default=False)
     address = models.TextField(blank=True)
+    location = PointField(blank=True)
     email = models.EmailField(blank=True)
     other_emails = fields.EmailsListField(blank=True, max_length=255)
     contact_salutation = models.CharField(blank=True, max_length=30)
@@ -75,7 +79,6 @@ class Agency(models.Model, RequestHelper):
     contact_last_name = models.CharField(blank=True, max_length=100)
     contact_title = models.CharField(blank=True, max_length=255)
     url = models.URLField(blank=True, verbose_name='FOIA Web Page', help_text='Begin with http://')
-    expires = models.DateField(blank=True, null=True)
     phone = models.CharField(blank=True, max_length=30)
     fax = models.CharField(blank=True, max_length=30)
     notes = models.TextField(blank=True)
@@ -99,7 +102,6 @@ class Agency(models.Model, RequestHelper):
     @models.permalink
     def get_absolute_url(self):
         """The url for this object"""
-        # pylint: disable=no-member
         return ('agency-detail', [], {'jurisdiction': self.jurisdiction.slug,
                                       'jidx': self.jurisdiction.pk,
                                       'slug': self.slug, 'idx': self.pk})
@@ -142,23 +144,27 @@ class Agency(models.Model, RequestHelper):
         else:
             return self.name
 
-    def expired(self):
-        """Is this agency expired?"""
+    def is_stale(self):
+        """Should this agency be marked as stale?
 
-        if self.expires:
-            return self.expires < date.today()
-
-    def latest_response(self):
-        """When was the last time we heard from them?"""
-        # pylint: disable=no-member
-        foias = self.foiarequest_set.get_open()
+        If the latest response to any open request is greater than STALE_DURATION
+        days ago, or if no responses to any open request, if the oldest open
+        request was sent greater than STALE_DURATION days ago.  If no open requests,
+        do not mark as stale."""
+        # first find any open requests, if none, not stale
+        foias = self.foiarequest_set.get_open().order_by('date_submitted')
+        if not foias:
+            return False
+        # find the latest response to an open request
         latest_responses = []
         for foia in foias:
             response = foia.latest_response()
             if response:
                 latest_responses.append(response)
         if latest_responses:
-            return max(latest_responses)
+            return min(latest_responses) >= STALE_DURATION
+        # no response to open requests, use oldest open request submit date
+        return (date.today() - foias[0].date_submitted).days >= STALE_DURATION
 
     def count_thanks(self):
         """Count how many thanks this agency has received"""

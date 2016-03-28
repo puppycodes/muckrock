@@ -7,7 +7,7 @@ from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth.models import User
 from django.utils.text import slugify
 
-import autocomplete_light
+from autocomplete_light import shortcuts as autocomplete_light
 import re
 
 from muckrock.accounts.models import Profile
@@ -118,7 +118,7 @@ class RegisterForm(UserCreationForm):
         """Do a case insensitive uniqueness check and clean username input"""
         username = self.cleaned_data['username']
         username = re.sub(r'[^\w\-.@ ]', '', username) # strips illegal characters from username
-        if User.objects.filter(username__iexact=username):
+        if User.objects.filter(username__iexact=username).exists():
             raise forms.ValidationError("This username is taken.")
         return username
 

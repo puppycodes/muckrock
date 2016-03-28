@@ -2,6 +2,8 @@
 Views for mailgun
 """
 
+from django.conf import settings
+from django.core.cache import cache
 from django.core.mail import EmailMessage
 from django.http import HttpResponse, HttpResponseForbidden
 from django.views.decorators.csrf import csrf_exempt
@@ -22,7 +24,6 @@ from muckrock.agency.models import Agency
 from muckrock.foia.models import FOIARequest, FOIACommunication, FOIAFile, RawEmail
 from muckrock.foia.tasks import upload_document_cloud, classify_status
 from muckrock.mailgun.models import WhitelistDomain
-from muckrock.settings import MAILGUN_ACCESS_KEY
 from muckrock.task.models import (
         FailedFaxTask,
         OrphanTask,
@@ -46,7 +47,8 @@ def _upload_file(foia, comm, file_, sender):
             date=datetime.now(),
             source=source[:70],
             access=access)
-    foia_file.ffile.save(file_.name[:100].encode('ascii', 'ignore'), file_)
+    # max db size of 255, - 22 for folder name
+    foia_file.ffile.save(file_.name[:233].encode('ascii', 'ignore'), file_)
     foia_file.save()
     if foia:
         upload_document_cloud.apply_async(args=[foia_file.pk, False], countdown=3)
@@ -73,13 +75,51 @@ def _make_orphan_comm(from_, to_, post, files, foia):
     return comm
 
 @csrf_exempt
-def handle_request(request, mail_id):
-    """Handle incoming mailgun FOI request messages"""
-    # pylint: disable=broad-except
+def route_mailgun(request):
+    """Handle routing of incoming mail with proper header parsing"""
 
     post = request.POST
     if not _verify(post):
         return HttpResponseForbidden()
+
+    # The way spam hero is currently set up, all emails are sent to the same
+    # address, so we must parse to headers to find the recipient.  This can
+    # cause duplicate messages if one email is sent to or CC'd to multiple
+    # addresses @request.muckrock.com.  To try and avoid this, we will cache
+    # the message id, which should be a unique identifier for the message.
+    # If it exists int he cache, we will stop processing this email.  The
+    # ID will be cached for 5 minutes - duplicates should normally be processed
+    # within seconds of each other.
+    message_id = (
+            post.get('Message-ID') or
+            post.get('Message-Id') or
+            post.get('message-id'))
+    if message_id:
+        # cache.add will return False if the key is already present
+        if not cache.add(message_id, 1, 300):
+            return HttpResponse('OK')
+
+    p_request_email = re.compile(r'(\d+-\d{3,10})@requests.muckrock.com')
+    tos = post.get('To', '') or post.get('to', '')
+    ccs = post.get('Cc', '') or post.get('cc', '')
+    name_emails = getaddresses([tos.lower(), ccs.lower()])
+    logger.info('Incoming email: %s', name_emails)
+    for _, email in name_emails:
+        m_request_email = p_request_email.match(email)
+        if m_request_email:
+            _handle_request(request, m_request_email.group(1))
+        elif email == 'fax@requests.muckrock.com':
+            _fax(request)
+        elif email.endswith('@requests.muckrock.com'):
+            _catch_all(request, email)
+    return HttpResponse('OK')
+
+
+def _handle_request(request, mail_id):
+    """Handle incoming mailgun FOI request messages"""
+    # pylint: disable=broad-except
+
+    post = request.POST
     from_ = post.get('From')
     to_ = post.get('To') or post.get('to')
     subject = post.get('Subject') or post.get('subject', '')
@@ -104,7 +144,7 @@ def handle_request(request, mail_id):
         comm = FOIACommunication.objects.create(
                 foia=foia, from_who=from_realname[:255], priv_from_who=from_[:255],
                 to_who=foia.user.get_full_name(),
-                subject=subject, response=True,
+                subject=subject[:255], response=True,
                 date=datetime.now(), full_html=False, delivered='email',
                 communication='%s\n%s' %
                     (post.get('stripped-text', ''), post.get('stripped-signature')))
@@ -159,17 +199,13 @@ def handle_request(request, mail_id):
         # If anything I haven't accounted for happens, at the very least forward
         # the email to requests so it isn't lost
         logger.error('Uncaught Mailgun Exception: %s', mail_id, exc_info=sys.exc_info())
-        _forward(post, request.FILES, 'Uncaught Mailgun Exception')
+        _forward(post, request.FILES, 'Uncaught Mailgun Exception', info=True)
         return HttpResponse('ERROR')
 
     return HttpResponse('OK')
 
-@csrf_exempt
-def fax(request):
+def _fax(request):
     """Handle fax confirmations"""
-
-    if not _verify(request.POST):
-        return HttpResponseForbidden()
 
     p_id = re.compile(r'MR#(\d+)-(\d+)')
 
@@ -178,6 +214,7 @@ def fax(request):
     m_id = p_id.search(subject)
 
     if m_id:
+        # pylint: disable=duplicate-except
         try:
             FOIARequest.objects.get(pk=m_id.group(1))
             comm = FOIACommunication.objects.get(pk=m_id.group(2))
@@ -190,19 +227,20 @@ def fax(request):
                 comm.opened = True
                 comm.save()
             if subject.startswith('FAILURE:'):
+                reasons = [line for line in
+                        post.get('body-plain', '').split('\n')
+                        if line.startswith('REASON:')]
+                reason = reasons[0] if reasons else ''
                 FailedFaxTask.objects.create(
                     communication=comm,
+                    reason=reason,
                 )
 
     _forward(request.POST, request.FILES)
     return HttpResponse('OK')
 
-@csrf_exempt
-def catch_all(request, address):
+def _catch_all(request, address):
     """Handle emails sent to other addresses"""
-
-    if not _verify(request.POST):
-        return HttpResponseForbidden()
 
     post = request.POST
 
@@ -275,12 +313,12 @@ def _verify(post):
     token = post.get('token')
     timestamp = post.get('timestamp')
     signature = post.get('signature')
-    return (signature == hmac.new(key=MAILGUN_ACCESS_KEY,
+    return (signature == hmac.new(key=settings.MAILGUN_ACCESS_KEY,
                                   msg='%s%s' % (timestamp, token),
                                   digestmod=hashlib.sha256).hexdigest()) \
            and int(timestamp) + 300 > time.time()
 
-def _forward(post, files, title='', extra_content=''):
+def _forward(post, files, title='', extra_content='', info=False):
     """Forward an email from mailgun to admin"""
     if title:
         subject = '%s: %s' % (title, post.get('subject', ''))
@@ -293,7 +331,10 @@ def _forward(post, files, title='', extra_content=''):
     else:
         body = post.get('body-plain')
 
-    email = EmailMessage(subject, body, post.get('From'), ['requests@muckrock.com'])
+    to_addresses = ['requests@muckrock.com']
+    if info:
+        to_addresses.append('info@muckrock.com')
+    email = EmailMessage(subject, body, post.get('From'), to_addresses)
     for file_ in files.itervalues():
         email.attach(file_.name, file_.read(), file_.content_type)
 

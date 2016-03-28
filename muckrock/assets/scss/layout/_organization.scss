@@ -69,36 +69,8 @@ $request-breakpoint: 768px;
         // font-size: $font-size-6;
         font-weight: $font-weight-bold;
     }
-    .status .badge {
-        display: inline-block;
-        border: 2px solid;
-        border-radius: 4px;
-        padding: $vertical-rhythm/4;
-        color: $color-grey;
-        line-height: 1em;
-        font-weight: $font-weight-bold;
-        text-align: center;
-        cursor: default;
-        &.active {
-            color: $color-green;
-        }
-        &.inactive {
-            color: $color-red;
-        }
-    }
     form {
         display: inline-block;
-    }
-    .progress {
-        width: 100%;
-        border: 1px solid $color-grey;
-        @include border-radius;
-        overflow: hidden;
-        .meter {
-            display: block;
-            background: $color-green;
-            height: $vertical-rhythm;
-        }
     }
     .counter {
         @include display(flex);

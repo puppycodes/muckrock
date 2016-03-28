@@ -13,8 +13,9 @@ from django.template import RequestContext
 
 from adaptor.model import CsvModel
 from adaptor.fields import CharField, DjangoModelField
-from reversion import VersionAdmin
-import autocomplete_light
+from reversion.admin import VersionAdmin
+from autocomplete_light import shortcuts as autocomplete_light
+from leaflet.admin import LeafletGeoAdmin
 import logging
 import sys
 
@@ -43,6 +44,10 @@ class AgencyAdminForm(forms.ModelForm):
             'JurisdictionAdminAutocomplete',
             queryset=Jurisdiction.objects.all())
     appeal_agency = autocomplete_light.ModelChoiceField(
+            'AgencyAppealAdminAutocomplete',
+            queryset=Agency.objects.all(),
+            required=False)
+    payable_to = autocomplete_light.ModelChoiceField(
             'AgencyAdminAutocomplete',
             queryset=Agency.objects.all(),
             required=False)
@@ -57,7 +62,7 @@ class AgencyAdminForm(forms.ModelForm):
         fields = '__all__'
 
 
-class AgencyAdmin(VersionAdmin):
+class AgencyAdmin(LeafletGeoAdmin, VersionAdmin):
     """Agency admin options"""
     change_list_template = 'admin/agency/agency/change_list.html'
     prepopulated_fields = {'slug': ('name',)}
@@ -115,7 +120,6 @@ admin.site.register(Agency, AgencyAdmin)
 
 def get_jurisdiction(full_name):
     """Get the jurisdiction from its name and parent"""
-    # pylint: disable=no-member
     if ', ' in full_name:
         name, parent_abbrev = full_name.split(', ')
         parent = Jurisdiction.objects.get(abbrev=parent_abbrev)

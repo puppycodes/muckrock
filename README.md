@@ -1,41 +1,57 @@
 # MuckRock
 
-[ ![Codeship Status for MuckRock/muckrock](https://codeship.com/projects/c14392c0-630c-0132-1e4c-4ad47cf4b99f/status?branch=master)](https://codeship.com/projects/52228)
+[![Codeship Status for MuckRock/muckrock][codeship-img]][codeship]
+[![codecov.io][codecov-img]][codecov]
 
-## Install and run
+## Install
 
-1. Set up your virtual machine
-  1. Install [Vagrant](https://www.vagrantup.com/downloads.html)
-  2. `cd` into the `vm` directory and run `vagrant up` (this will take a while)
-  3. Type `vagrant ssh` to ssh into the virtual machine
+1. Check out the git repository
+  1. `git clone git@github.com:MuckRock/muckrock.git`
 
-2. Set the secrets
-  1. From inside the `muckrock` directory, `touch local_settings.py` (`settings.py` should already be in this directory).
-  2. The `local_settings.py` file should never be checked in to the repository.
-  3. We will send you the (definitely) sensitive information in a (probably) secure manner.
+2. Set up your virtual machine
+  1. Install [Vagrant][vagrant] and [VirtualBox][virtualbox]
+  2. Run `vagrant up` (this will take a while)
+  3. Run `vagrant ssh` to ssh into the virtual machine
 
-3. Sync and populate the database inside the virtual machine
-  1. From within the virtual machine, `cd` into the `muckrock` directory
-  2. Run `./manage.py syncdb` and create a superuser when asked to do so
-  3. Run `./manage.py migrate`
-  4. Run `fab populate-db` to populate the DB (this is broken I think…)
+3. Set the secrets
+  1. `cd muckrock`
+  2. `touch .settings.sh`
+  3. The `.settings.sh` file should **never** be checked in to the repository.
+  4. We will send you the (definitely) sensitive information in a (probably) secure manner.
+  5. Inside your VM, run `source ~/.bashrc`.
 
-4. Run the test server inside the virtual machine
+4. Populate the database and sync the files from AWS inside the virtual machine (Run all commands inside the VM)
+  1. Restart the database to pick up correct permissions, `sudo service postgresql`
+  2. Login to heroku toolbelt, `heroku login`
+  3. Pull the database, `fab populate-db`
+  4. Pull files from S3, `fab sync-aws`
+
+5. Run the test server inside the virtual machine
   1. Run `fab mail &` to start a background email server
   2. Run `fab celery &` to start a background task queue
   3. Run `fab runserver` to start a server instance
   4. Navigate your web browser (from the host machine) to `localhost:8000`
 
-You should have a very bare MuckRock site running locally now.
+You should have a fully populated MuckRock site running locally now.
 The code checked out from GitHub is synced between the virtual machine and your host machine, so you may edit the code using your favorite text editor locally while running the code from within the virtual machine. To run the server again, just follow step 4.
 
 ## Test and lint
 
 * Test your code in one of two ways:
-    * Run `fab test` to run all the tests
-    * Run `./manage.py test muckrock.<app_name>` to test a particular application
-* Lint your code by running `fab pylint`
+    * Run `fab test` to run all the tests.
+    * Run `fab test:muckrock.<app>` to test a particular application.
+    * Run `fab test:muckrock,1` to reuse the database between tests, which saves a ton of time.
+* Lint your code by running `fab pylint`.
 
 ## Push and deploy
 
-The `master` branch represents our product code. `master` should only ever be updated by merges from the `dev` branch, which tracks it. New features should be branched from `dev`, then merged back into `dev` once they are tested and linted. Any feature branch pushed to GitHub will be evaluated by Codeship. If the `staging` branch is pushed, the [staging server](http://muckrock-staging.herokuapp.com) will be updated. If the `master` branch is pushed, the [production server](https://www.muckrock.com) will be updated.
+The `master` branch represents our product code. `master` should only ever be updated by merges from the `dev` branch, which tracks it. New features should be branched from `dev`, then merged back into `dev` once they are tested and linted. Any feature branch pushed to GitHub will be evaluated by Codeship. If the `staging` branch is pushed, the [staging server][staging] will be updated. If the `master` branch is pushed, the [production server][production] will be updated.
+
+[codeship]: https://codeship.com/projects/52228
+[codeship-img]: https://codeship.com/projects/c14392c0-630c-0132-1e4c-4ad47cf4b99f/status?branch=master
+[staging]: http://muckrock-staging.herokuapp.com
+[production]: https://www.muckrock.com
+[vagrant]: https://www.vagrantup.com/downloads.html
+[virtualbox]: https://www.virtualbox.org
+[codecov-img]:https://codecov.io/github/MuckRock/muckrock/coverage.svg?token=SBg37XM3j1&branch=master
+[codecov]: https://codecov.io/github/MuckRock/muckrock?branch=master

@@ -5,7 +5,7 @@ Forms for Task app
 from django import forms
 from django.contrib.auth.models import User
 
-import autocomplete_light
+from autocomplete_light import shortcuts as autocomplete_light
 
 from muckrock.forms import MRFilterForm
 from muckrock import foia
@@ -30,6 +30,11 @@ class FlaggedTaskForm(forms.Form):
     text = forms.CharField(widget=forms.Textarea(attrs={
         'placeholder': 'Write your reply here'
     }))
+
+
+class StaleAgencyTaskForm(forms.Form):
+    """Simple form for acting on a StaleAgencyTask"""
+    email = forms.EmailField()
 
 
 class ResponseTaskForm(forms.Form):

@@ -5,6 +5,7 @@ Tasks for the account application
 
 from celery.schedules import crontab
 from celery.task import periodic_task
+from django.core.management import call_command
 from django.contrib.auth.models import User
 from django.db.models import Sum, F
 
@@ -15,6 +16,7 @@ from muckrock.accounts.models import Profile, Statistics
 from muckrock.agency.models import Agency
 from muckrock.foia.models import FOIARequest, FOIAFile, FOIACommunication
 from muckrock.news.models import Article
+from muckrock.organization.models import Organization
 from muckrock.task.models import (
         Task,
         OrphanTask,
@@ -25,8 +27,7 @@ from muckrock.task.models import (
         NewAgencyTask,
         ResponseTask,
         GenericTask,
-        PaymentTask,
-        GenericCrowdfundTask,
+        CrowdfundTask,
         FailedFaxTask,
         )
 
@@ -66,20 +67,48 @@ def store_statstics():
         daily_requests_pro=FOIARequest.objects.filter(
             user__profile__acct_type='pro',
             date_submitted=yesterday
+        ).exclude(
+            user__profile__organization__active=True,
+            user__profile__organization__monthly_cost__gt=0,
         ).count(),
         daily_requests_basic=FOIARequest.objects.filter(
             user__profile__acct_type='basic',
             date_submitted=yesterday
+        ).exclude(
+            user__profile__organization__active=True,
+            user__profile__organization__monthly_cost__gt=0,
         ).count(),
         daily_requests_beta=FOIARequest.objects.filter(
             user__profile__acct_type='beta',
+            date_submitted=yesterday
+        ).exclude(
+            user__profile__organization__active=True,
+            user__profile__organization__monthly_cost__gt=0,
+        ).count(),
+        daily_requests_proxy=FOIARequest.objects.filter(
+            user__profile__acct_type='proxy',
+            date_submitted=yesterday
+        ).exclude(
+            user__profile__organization__active=True,
+            user__profile__organization__monthly_cost__gt=0,
+        ).count(),
+        daily_requests_admin=FOIARequest.objects.filter(
+            user__profile__acct_type='admin',
+            date_submitted=yesterday
+        ).exclude(
+            user__profile__organization__active=True,
+            user__profile__organization__monthly_cost__gt=0,
+        ).count(),
+        daily_requests_org=FOIARequest.objects.filter(
+            user__profile__organization__active=True,
+            user__profile__organization__monthly_cost__gt=0,
             date_submitted=yesterday
         ).count(),
         daily_articles=Article.objects.filter(pub_date__gte=yesterday,
                                               pub_date__lt=date.today()).count(),
         orphaned_communications=FOIACommunication.objects.filter(foia=None).count(),
         stale_agencies=Agency.objects.filter(stale=True).count(),
-        unapproved_agencies=Agency.objects.filter(approved=False).count(),
+        unapproved_agencies=Agency.objects.filter(status='pending').count(),
         total_tasks=Task.objects.count(),
         total_unresolved_tasks=Task.objects.filter(resolved=False).count(),
         total_generic_tasks=GenericTask.objects.count(),
@@ -101,16 +130,22 @@ def store_statstics():
         total_unresolved_response_tasks=ResponseTask.objects.filter(resolved=False).count(),
         total_faxfail_tasks=FailedFaxTask.objects.count(),
         total_unresolved_faxfail_tasks=FailedFaxTask.objects.filter(resolved=False).count(),
-        total_payment_tasks=PaymentTask.objects.count(),
-        total_unresolved_payment_tasks=PaymentTask.objects.filter(resolved=False).count(),
-        total_crowdfundpayment_tasks=GenericCrowdfundTask.objects.count(),
+        total_crowdfundpayment_tasks=CrowdfundTask.objects.count(),
         total_unresolved_crowdfundpayment_tasks=
-            GenericCrowdfundTask.objects.filter(resolved=False).count(),
+            CrowdfundTask.objects.filter(resolved=False).count(),
         daily_robot_response_tasks=ResponseTask.objects.filter(
                date_done__gte=yesterday,
                date_done__lt=date.today(),
                resolved_by__profile__acct_type='robot',
                ).count(),
+        total_active_org_members=Profile.objects.filter(
+                organization__active=True,
+                organization__monthly_cost__gt=0,
+                ).count(),
+        total_active_orgs=Organization.objects.filter(
+                active=True,
+                monthly_cost__gt=0,
+                ).count(),
         )
     # stats needs to be saved before many to many relationships can be set
     stats.users_today = User.objects.filter(last_login__year=yesterday.year,
@@ -129,3 +164,15 @@ def _notices(email_pref):
 def weekly_notices():
     """Send out weekly notices"""
     _notices('weekly')
+
+@periodic_task(run_every=crontab(day_of_week='sun', hour=1, minute=0),
+               name='muckrock.accounts.tasks.db_cleanup')
+def db_cleanup():
+    """Call some management commands to clean up the database"""
+    call_command('deleterevisions', 'foia', days=180,
+            force=True, confirmation=False, verbosity=2)
+    call_command('deleterevisions', 'task', days=180,
+            force=True, confirmation=False, verbosity=2)
+    call_command('deleterevisions', days=730,
+            force=True, confirmation=False, verbosity=2)
+    call_command('clearsessions', verbosity=2)
