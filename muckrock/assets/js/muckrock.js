@@ -1,3 +1,20 @@
+import 'jquery-ui/datepicker'
+
+import './account'
+import './checkout'
+import './communication'
+import './crowdfund'
+import './currencyField'
+import './dropdown'
+import './foiaRequest'
+import './formset'
+import './list'
+import './loupe'
+import './multiselect'
+import './quicksearch'
+import './tabs'
+import './task'
+
 function modal(nextSelector) {
     var overlay = '#modal-overlay';
     $(overlay).addClass('visible');
@@ -22,7 +39,6 @@ $('.embed.hidden-modal').each(function() {
 });
 
 // FLAG FORM
-
 $('#show-flag-form').click(function(){
     var thisButton = $(this);
     $(thisButton).hide();
@@ -166,21 +182,19 @@ $('#quick-log-in').click(function(e){
     });
 });
 
-// Stripe Checkout
+$('document').ready(function(){
 
-$('form.stripe-checkout').checkout();
+    // Stripe Checkout
+    $('form.stripe-checkout').checkout();
 
-// Crowdfund form submission
+    // Crowdfund form submission
+    $('form.crowdfund-form').crowdfund();
 
-$('form.crowdfund-form').crowdfund();
+    // Currency Field
+    $('input.currency-field').currencyField();
+    $('input[name=payment_required]').currencyField();
 
-// Currency Field
-
-$('input.currency-field').currencyField();
-
-// Date Picker
-
-$(function() {
+    // Date Picker
     $('.datepicker').datepicker({
         changeMonth: true,
         changeYear: true,
@@ -188,4 +202,10 @@ $(function() {
         maxDate: '+1y',
         yearRange: '1776:+1'
     });
+
+    $('.news--main img').loupe({
+        height: 200,
+        width: 200
+    });
+
 });
