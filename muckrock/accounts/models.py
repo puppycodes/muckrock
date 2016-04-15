@@ -436,6 +436,9 @@ class AgencyProfile(models.Model):
         related_name='members',
         on_delete=models.PROTECT)
 
+    def __unicode__(self):
+        return u"%s's Agency Profile" % unicode(self.user).capitalize()
+
 
 class Statistics(models.Model):
     """Nightly statistics"""
