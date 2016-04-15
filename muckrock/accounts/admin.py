@@ -13,6 +13,7 @@ from reversion.admin import VersionAdmin
 import stripe
 
 from muckrock.accounts.models import Profile, AgencyProfile, Statistics
+from muckrock.agency.models import Agency
 from muckrock.jurisdiction.models import Jurisdiction
 
 # These inhereit more than the allowed number of public methods
@@ -48,9 +49,23 @@ class ProfileInline(admin.StackedInline):
     max_num = 1
 
 
+class AgencyProfileAdminForm(forms.ModelForm):
+    """Form to include custom choice fields"""
+
+    agency = autocomplete_light.ModelChoiceField(
+            'AgencyAdminAutocomplete',
+            queryset=Agency.objects.all(),
+            required=False)
+
+    class Meta:
+        model = AgencyProfile
+        fields = '__all__'
+
+
 class AgencyProfileInline(admin.StackedInline):
     """Agency Profile admin options"""
     model = AgencyProfile
+    form = AgencyProfileAdminForm
     extra = 0
     max_num = 1
 
