@@ -308,7 +308,7 @@ class Detail(DetailView):
         context['is_thankable'] = foia.is_thankable()
         context['can_agency_reply'] = (
                 user.is_authenticated() and
-                user.profile.acct_type =='agency' and
+                user.profile.acct_type == 'agency' and
                 user.agencyprofile.agency == foia.agency)
         if foia.sidebar_html:
             messages.info(self.request, foia.sidebar_html)
