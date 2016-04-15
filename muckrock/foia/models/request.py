@@ -394,7 +394,8 @@ class FOIARequest(models.Model):
         """Can this user view this request?"""
         user_has_access = (user.is_staff or self.created_by(user)
                 or self.has_editor(user) or self.has_viewer(user)
-                or (user.profile.acct_type == 'agency' and
+                or (user.is_authenticated() and
+                    user.profile.acct_type == 'agency' and
                     user.agencyprofile.agency == self.agency))
         request_is_private = self.status == 'started' or self.embargo
         viewable_by_user = True

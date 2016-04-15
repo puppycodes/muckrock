@@ -264,7 +264,9 @@ class Detail(DetailView):
         context['all_tags'] = Tag.objects.all()
         context['past_due'] = is_past_due
         context['user_can_edit'] = user_can_edit
-        context['agency_owner'] = (user.profile.acct_type == 'agency' and
+        context['agency_owner'] = (
+                user.is_authenticated() and
+                user.profile.acct_type == 'agency' and
                 user.agencyprofile.agency == foia.agency)
         context['user_can_pay'] = user_can_edit and foia.is_payable()
         context['embargo'] = {
@@ -304,7 +306,9 @@ class Detail(DetailView):
         context['stripe_pk'] = settings.STRIPE_PUB_KEY
         context['sidebar_admin_url'] = reverse('admin:foia_foiarequest_change', args=(foia.pk,))
         context['is_thankable'] = foia.is_thankable()
-        context['can_agency_reply'] = (user.profile.acct_type =='agency' and
+        context['can_agency_reply'] = (
+                user.is_authenticated() and
+                user.profile.acct_type =='agency' and
                 user.agencyprofile.agency == foia.agency)
         if foia.sidebar_html:
             messages.info(self.request, foia.sidebar_html)
