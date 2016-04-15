@@ -55,6 +55,15 @@ from muckrock.views import class_view_decorator, MRFilterableListView
 
 logger = logging.getLogger(__name__)
 STATUS_NODRAFT = [st for st in STATUS if st != ('started', 'Draft')]
+AGENCY_STATUS = [
+    ('processed', 'Further Response Coming'),
+    ('fix', 'Fix Required'),
+    ('payment', 'Payment Required'),
+    ('rejected', 'Rejected'),
+    ('no_docs', 'No Responsive Documents'),
+    ('done', 'Completed'),
+    ('partial', 'Partially Completed'),
+    ]
 
 
 class RequestList(MRFilterableListView):
@@ -255,9 +264,13 @@ class Detail(DetailView):
         context['all_tags'] = Tag.objects.all()
         context['past_due'] = is_past_due
         context['user_can_edit'] = user_can_edit
+        context['agency_owner'] = (
+                user.is_authenticated() and
+                user.profile.acct_type == 'agency' and
+                user.agencyprofile.agency == foia.agency)
         context['user_can_pay'] = user_can_edit and foia.is_payable()
         context['embargo'] = {
-            'show': ((user_can_edit and foia.user.profile.can_embargo)\
+            'show': ((user_can_edit and foia.user.profile.can_embargo)
                     or foia.embargo) or user.is_staff,
             'edit': user_can_edit and foia.user.profile.can_embargo,
             'add': user_can_edit and user.profile.can_embargo,
@@ -281,6 +294,7 @@ class Detail(DetailView):
         context['contextual_request_actions'] = \
                 foia.contextual_request_actions(user, user_can_edit)
         context['status_choices'] = STATUS if include_draft else STATUS_NODRAFT
+        context['agency_status_choices'] = AGENCY_STATUS
         context['show_estimated_date'] = foia.status not in ['submitted', 'ack', 'done', 'rejected']
         context['change_estimated_date'] = FOIAEstimatedCompletionDateForm(instance=foia)
 
@@ -292,6 +306,10 @@ class Detail(DetailView):
         context['stripe_pk'] = settings.STRIPE_PUB_KEY
         context['sidebar_admin_url'] = reverse('admin:foia_foiarequest_change', args=(foia.pk,))
         context['is_thankable'] = foia.is_thankable()
+        context['can_agency_reply'] = (
+                user.is_authenticated() and
+                user.profile.acct_type =='agency' and
+                user.agencyprofile.agency == foia.agency)
         if foia.sidebar_html:
             messages.info(self.request, foia.sidebar_html)
         return context
