@@ -2,9 +2,10 @@
 Django settings for muckrock project
 """
 
+from django.core.urlresolvers import reverse
+import djcelery
 import os
 import urlparse
-from django.core.urlresolvers import reverse
 
 def boolcheck(setting):
     """Turn env var into proper bool"""
@@ -25,6 +26,8 @@ SESSION_COOKIE_HTTPONLY = True
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
+
+DEFAULT_FROM_EMAIL = 'info@muckrock.com'
 
 DOGSLOW = True
 DOGSLOW_LOG_TO_FILE = False
@@ -57,7 +60,7 @@ SITE_ID = 1
 
 # If you set this to False, Django will make some optimizations so as not
 # to load the internationalization machinery.
-USE_I18N = True
+USE_I18N = False
 
 # Absolute path to the directory that holds media.
 # Example: "/home/media/media.lawrence.com/"
@@ -70,6 +73,13 @@ STATICFILES_DIRS = (
     os.path.join(SITE_ROOT, 'assets'),
 )
 
+WEBPACK_LOADER = {
+    'DEFAULT': {
+        'BUNDLE_DIR_NAME': 'bundles/',
+        'STATS_FILE': os.path.join(SITE_ROOT, 'assets/webpack-stats.json'),
+    }
+}
+
 COMPRESS_OFFLINE = True
 
 COMPRESS_STORAGE = 'compressor.storage.CompressorFileStorage'
@@ -77,9 +87,8 @@ COMPRESS_CSS_FILTERS = [
     'compressor.filters.css_default.CssAbsoluteFilter',
     'compressor.filters.cssmin.CSSMinFilter',
 ]
-COMPRESS_PRECOMPILERS = (
-    ('text/x-scss', 'sass --sourcemap=none {infile} {outfile}'),
-)
+
+THUMBNAIL_CACHE_DIMENSIONS = True
 
 if AWS_DEBUG:
     DEFAULT_FILE_STORAGE = 'storages.backends.s3boto.S3BotoStorage'
@@ -186,6 +195,7 @@ INSTALLED_APPS = (
     'robots',
     'storages',
     'taggit',
+    'webpack_loader',
     'lot',
     'package_monitor',
     'image_diet',
@@ -201,6 +211,7 @@ INSTALLED_APPS = (
     'muckrock.crowdfund',
     'muckrock.sidebar',
     'muckrock.task',
+    'muckrock.map',
     'muckrock.message',
     'muckrock.organization',
     'muckrock.project',
@@ -227,7 +238,6 @@ urlparse.uses_netloc.append('redis')
 
 BROKER_URL = os.environ.get('REDISTOGO_URL', 'redis://localhost:6379/0')
 
-import djcelery
 djcelery.setup_loader()
 
 CELERYBEAT_SCHEDULER = 'djcelery.schedulers.DatabaseScheduler'
@@ -328,7 +338,7 @@ LOGGING = {
     'handlers': {
         'null': {
             'level': 'DEBUG',
-            'class': 'django.utils.log.NullHandler',
+            'class': 'logging.NullHandler',
         },
         'console':{
             'level': 'INFO',
@@ -363,7 +373,7 @@ LOGGING = {
         },
         'muckrock': {
             'handlers': ['console', 'mail_admins', 'sentry'],
-            'level': 'WARNING',
+            'level': 'INFO',
         },
         'django.db.backends': {
             'level': 'ERROR',
@@ -401,6 +411,10 @@ AWS_AUTOIMPORT_BUCKET_NAME = os.environ.get(
 STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY')
 STRIPE_PUB_KEY = os.environ.get('STRIPE_PUB_KEY')
 
+MAILCHIMP_API_KEY = os.environ.get('MAILCHIMP_API_KEY', '')
+MAILCHIMP_API_ROOT = 'https://us2.api.mailchimp.com/3.0'
+MAILCHIMP_LIST_DEFAULT = '20aa4a931d'
+
 MAILGUN_ACCESS_KEY = os.environ.get('MAILGUN_ACCESS_KEY')
 MAILGUN_SERVER_NAME = 'requests.muckrock.com'
 
@@ -417,7 +431,7 @@ PUBLICATION_NAME = 'MuckRock'
 # Register database schemes in URLs.
 urlparse.uses_netloc.append('postgres')
 
-url = urlparse.urlparse(os.environ.get('DATABASE_URL', 'postgres://muckrock@localhost/muckrock'))
+url = urlparse.urlparse(os.environ.get('DATABASE_URL', 'postgres://vagrant@localhost/muckrock'))
 
 # Update with environment configuration.
 DATABASES = {
@@ -439,11 +453,10 @@ CACHES = {
 }
 
 REST_FRAMEWORK = {
-    'PAGINATE_BY': 20,                 # Default to 20
-    'PAGINATE_BY_PARAM': 'page_size',  # Allow client to override, using `?page_size=xxx`.
-    'MAX_PAGINATE_BY': 100,            # Maximum limit allowed when using `?page_size=xxx`.
+    'DEFAULT_PAGINATION_CLASS': 'muckrock.pagination.StandardPagination',
     'DEFAULT_FILTER_BACKENDS':
-        ('rest_framework.filters.DjangoFilterBackend',),
+        ('rest_framework.filters.DjangoFilterBackend',
+         'rest_framework.filters.OrderingFilter'),
     'DEFAULT_AUTHENTICATION_CLASSES':
         ('rest_framework.authentication.TokenAuthentication',
          'rest_framework.authentication.SessionAuthentication',),
@@ -491,7 +504,7 @@ LEAFLET_CONFIG = {
     'MIN_ZOOM': 4,
     'MAX_ZOOM': 18,
     'PLUGINS': {
-        'forms': {
+        'search': {
             'css': [
                 'vendor/leaflet-geocoder-control/Control.Geocoder.css',
             ],
@@ -500,6 +513,15 @@ LEAFLET_CONFIG = {
                 'js/leaflet-form.js'
             ],
             'auto-include': True,
+        },
+        'draw': {
+            'css': [
+                'leaflet/draw/leaflet.draw.css',
+                'leaflet/draw/leaflet.draw.ie.css'
+            ],
+            'js': [
+                'leaflet/draw/leaflet.draw.js'
+            ]
         }
     }
 }

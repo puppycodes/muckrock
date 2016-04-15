@@ -9,7 +9,6 @@ from muckrock import agency, foia, task
 # imports Task model separately to patch bug in django-compressor parser
 from muckrock.task.models import Task
 
- # pylint:disable=no-member
 
 register = template.Library()
 
@@ -103,7 +102,6 @@ class OrphanTaskNode(TaskNode):
 
     def get_extra_context(self):
         """Adds sender domain to the context"""
-        # pylint:disable=no-member
         extra_context = super(OrphanTaskNode, self).get_extra_context()
         extra_context['domain'] = self.task.get_sender_domain()
         extra_context['attachments'] = self.task.communication.files.all()
@@ -116,6 +114,7 @@ class RejectedEmailTaskNode(TaskNode):
     task_template = 'task/rejected_email.html'
     endpoint_name = 'rejected-email-task-list'
     class_name = 'rejected-email'
+
 
 class ResponseTaskNode(TaskNode):
     """Renders a response task."""
@@ -151,6 +150,13 @@ class SnailMailTaskNode(TaskNode):
         """Adds status to the context"""
         extra_context = super(SnailMailTaskNode, self).get_extra_context()
         extra_context['status'] = foia.models.STATUS
+        # if this is an appeal and their is a specific appeal agency, display
+        # that agency, else display the standard agency
+        foia_agency = self.task.communication.foia.agency
+        if self.task.category == 'a' and foia_agency.appeal_agency:
+            extra_context['agency'] = foia_agency.appeal_agency
+        else:
+            extra_context['agency'] = foia_agency
         return extra_context
 
 

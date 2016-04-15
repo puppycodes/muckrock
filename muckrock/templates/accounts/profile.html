@@ -77,6 +77,10 @@
         </form>
         <div class="controls">
             {% if request.user == user_obj %}
+            <a href="{% url 'foia-create' %}" class="primary button" onclick="ga('send', 'event', 'Requests', 'File', window.location.pathname)">
+                {% include 'lib/icons/create-request.svg' %}
+                <span>File a Request</span>
+            </a>
             <button class="primary" form="buy-requests" type="submit">Buy Requests</button>
             <a href="{% url 'acct-settings' %}" class="button">Settings</a>
             {% else %}
@@ -91,16 +95,11 @@
         {% else %}
         <h3>Projects</h3>
         {% endif %}
-        <ul class="project-list nostyle">
+        <div class="project-group">
         {% for project in projects %}
-            <li class="project-item" {% if project.image %}style="background-image:url('{% thumbnail project.image 800x600 %}')"{% endif %}>
-                <a href="{{project.get_absolute_url}}" title="{{project.title}}" class="project-info">
-                    <h4 class="title">{{project.title}}</h4>
-                    <p class="summary">{{project.summary|truncatechars:"300"}}</p>
-                </a>
-            </li>
+            {% include 'lib/project.html' %}
         {% endfor %}
-        </ul>
+        </div>
     </section>
     {% endif %}
     {% if articles %}

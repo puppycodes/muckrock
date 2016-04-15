@@ -7,6 +7,7 @@ from django.contrib.auth.decorators import login_required
 import django.contrib.auth.views as auth_views
 
 import muckrock.accounts.views as views
+from muckrock.forms import PasswordResetForm
 
 urlpatterns = patterns(
     '',
@@ -46,7 +47,8 @@ urlpatterns = patterns(
     url(r'^reset_pw/$',
         auth_views.password_reset,
         {'template_name': 'forms/account/pw_reset_part1.html',
-         'post_reset_redirect': 'acct-reset-pw-done'},
+         'post_reset_redirect': 'acct-reset-pw-done',
+         'password_reset_form': PasswordResetForm},
         name='acct-reset-pw'),
     url(r'^reset_pw/done/$',
         auth_views.password_reset_done,
@@ -75,6 +77,9 @@ urlpatterns = patterns(
     url(r'^settings/verify_email/$',
         views.verify_email,
         name='acct-verify-email'),
+     url(r'^proxies/$',
+        views.ProxyList.as_view(),
+        name='accounts-proxies'),
     url(r'^stripe_webhook_v2/$',
         views.stripe_webhook,
         name='acct-webhook-v2'),

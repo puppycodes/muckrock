@@ -77,6 +77,18 @@ class Project(models.Model):
         )
 
     tags = taggit.managers.TaggableManager(through='tags.TaggedItemBase', blank=True)
+    newsletter = models.CharField(max_length=255, blank=True, help_text='The MailChimp list id.')
+    newsletter_label = models.CharField(
+        max_length=100,
+        blank=True,
+        verbose_name='Newsletter Name',
+        help_text='Should describe the newsletter.')
+    newsletter_cta = models.CharField(
+        max_length=255,
+        blank=True,
+        verbose_name='Newsletter Description',
+        help_text='Should encourage readers to subscribe.')
+
 
     def __unicode__(self):
         return unicode(self.title)
@@ -104,10 +116,11 @@ class Project(models.Model):
 
     def has_contributor(self, user):
         """Checks if the user is a contributor."""
-        if user in self.contributors.all():
-            return True
-        else:
-            return False
+        return user in self.contributors.all()
+
+    def active_crowdfunds(self):
+        """Return all the active crowdfunds on this project."""
+        return self.crowdfunds.filter(closed=False)
 
     def suggest_requests(self):
         """Returns a list of requests that may be related to this project."""
@@ -131,23 +144,3 @@ class ProjectCrowdfunds(models.Model):
     # pylint: disable=model-missing-unicode
     project = models.ForeignKey(Project)
     crowdfund = models.OneToOneField('crowdfund.Crowdfund')
-
-
-class ProjectMap(models.Model):
-    """Project maps plot the locations of requests"""
-    title = models.CharField(max_length=100, help_text='Titles are limited to 100 characters.')
-    description = models.TextField(blank=True, null=True)
-    project = models.ForeignKey(Project, related_name='maps')
-    requests = models.ManyToManyField('foia.FOIARequest', related_name='maps', blank=True)
-
-    def __unicode__(self):
-        return unicode(self.title)
-
-    def get_absolute_url(self):
-        """Returns the map URL as a string"""
-        return reverse('project-map-detail', kwargs={
-            'project_slug': self.project.slug,
-            'project_pk': self.project.id,
-            'pk': self.pk,
-        })
-

@@ -11,7 +11,8 @@ from django.utils.html import escape
 from email.parser import Parser
 import re
 
-from muckrock.forms import TagManagerForm
+from muckrock.forms import NewsletterSignupForm, TagManagerForm
+from muckrock.project.forms import ProjectManagerForm
 
 register = Library()
 
@@ -178,6 +179,48 @@ def tag_manager(context, mr_object):
         'form': form,
         'is_authorized': is_authorized,
         'endpoint': mr_object.get_absolute_url()
+    }
+
+@register.inclusion_tag('project/component/manager.html', takes_context=True)
+def project_manager(context, mr_object):
+    """Template tag to insert a project manager component"""
+    try:
+        projects = mr_object.projects.all()
+    except AttributeError:
+        projects = None
+    try:
+        owner = mr_object.user
+    except AttributeError:
+        owner = None
+    user = context['user']
+    experimental = user.is_authenticated() and user.profile.experimental
+    authorized = user.is_staff or (user == owner and experimental)
+    form = ProjectManagerForm(initial={'projects': [project.pk for project in projects]})
+    return {
+        'projects': projects,
+        'form': form,
+        'authorized': authorized,
+        'endpoint': mr_object.get_absolute_url(),
+    }
+
+@register.inclusion_tag('lib/newsletter.html', takes_context=True)
+def newsletter(context, list_id=None, label=None, cta=None):
+    """Template tag to insert a newsletter signup form."""
+    list_id = settings.MAILCHIMP_LIST_DEFAULT if list_id is None else list_id
+    label = 'Newsletter' if label is None else label
+    cta = 'Want the latest investigative and FOIA news?' if cta is None else cta
+    is_default = list_id == settings.MAILCHIMP_LIST_DEFAULT
+    request = context['request']
+    initial_data = {'list': list_id}
+    if request.user.is_authenticated():
+        initial_data['email'] = request.user.email
+    newsletter_form = NewsletterSignupForm(initial=initial_data)
+    return {
+        'request': request,
+        'label': label,
+        'cta': cta,
+        'is_default': is_default,
+        'newsletter_form': newsletter_form
     }
 
 @register.filter

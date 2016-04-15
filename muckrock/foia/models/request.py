@@ -14,9 +14,9 @@ from django.template.loader import render_to_string
 
 import actstream
 from datetime import datetime, date, timedelta
-from djgeojson.fields import PointField
 from hashlib import md5
 import logging
+from reversion import revisions as reversion
 from taggit.managers import TaggableManager
 from unidecode import unidecode
 
@@ -201,6 +201,9 @@ class FOIARequest(models.Model):
     other_emails = fields.EmailsListField(blank=True, max_length=255)
     times_viewed = models.IntegerField(default=0)
     disable_autofollowups = models.BooleanField(default=False)
+    missing_proxy = models.BooleanField(default=False,
+            help_text='This request requires a proxy to file, but no such '
+            'proxy was avilable upon draft creation.')
     parent = models.ForeignKey('self', blank=True, null=True, on_delete=models.SET_NULL)
     block_incoming = models.BooleanField(
         default=False,
@@ -224,7 +227,6 @@ class FOIARequest(models.Model):
 
     objects = FOIARequestQuerySet.as_manager()
     tags = TaggableManager(through=TaggedItemBase, blank=True)
-    location = PointField(blank=True)
 
     foia_type = 'foia'
 
@@ -254,6 +256,12 @@ class FOIARequest(models.Model):
                 self.date_embargo = None
         if self.status == 'submitted' and self.date_processing is None:
             self.date_processing = date.today()
+
+        # add a reversion comment if possible
+        if 'comment' in kwargs:
+            comment = kwargs.pop('comment')
+            if reversion.revision_context_manager.is_active():
+                reversion.set_comment(comment)
         super(FOIARequest, self).save(*args, **kwargs)
 
     def is_editable(self):
@@ -292,7 +300,6 @@ class FOIARequest(models.Model):
 
     def is_payable(self):
         """Can this request be payed for by the user?"""
-        # pylint:disable=no-member
         has_open_crowdfund = self.has_crowdfund() and not self.crowdfund.closed
         has_payment_status = self.status == 'payment'
         return has_payment_status and not has_open_crowdfund
@@ -328,7 +335,6 @@ class FOIARequest(models.Model):
 
     def add_editor(self, user):
         """Grants the user permission to edit this request."""
-        # pylint: disable=no-member
         if not self.has_viewer(user) and not self.has_editor(user) and not self.created_by(user):
             self.edit_collaborators.add(user)
             self.save()
@@ -337,7 +343,6 @@ class FOIARequest(models.Model):
 
     def remove_editor(self, user):
         """Revokes the user's permission to edit this request."""
-        # pylint: disable=no-member
         if self.has_editor(user):
             self.edit_collaborators.remove(user)
             self.save()
@@ -365,7 +370,6 @@ class FOIARequest(models.Model):
 
     def add_viewer(self, user):
         """Grants the user permission to view this request."""
-        # pylint: disable=no-member
         if not self.has_viewer(user) and not self.has_editor(user) and not self.created_by(user):
             self.read_collaborators.add(user)
             self.save()
@@ -374,7 +378,6 @@ class FOIARequest(models.Model):
 
     def remove_viewer(self, user):
         """Revokes the user's permission to view this request."""
-        # pylint: disable=no-member
         if self.has_viewer(user):
             self.read_collaborators.remove(user)
             logger.info('%s revoked view access from %s', user, self)
@@ -420,7 +423,6 @@ class FOIARequest(models.Model):
 
     def last_comm(self):
         """Return the last communication"""
-        # pylint: disable=no-member
         return self.communications.last()
 
     def last_response(self):
@@ -429,7 +431,6 @@ class FOIARequest(models.Model):
 
     def set_mail_id(self):
         """Set the mail id, which is the unique identifier for the auto mailer system"""
-        # pylint: disable=no-member
         # use raw sql here in order to avoid race conditions
         uid = int(md5(self.title.encode('utf8') +
                       datetime.now().isoformat()).hexdigest(), 16) % 10 ** 8
@@ -454,7 +455,6 @@ class FOIARequest(models.Model):
 
     def get_to_who(self):
         """Who communications are to"""
-        # pylint: disable=no-member
         if self.agency:
             return self.agency.name
         else:
@@ -482,7 +482,6 @@ class FOIARequest(models.Model):
 
     def _notify(self):
         """Notify request's creator and followers about the update"""
-        # pylint: disable=no-member
         # notify creator
         self.user.profile.notify(self)
         # notify followers
@@ -492,7 +491,6 @@ class FOIARequest(models.Model):
 
     def update(self, anchor=None):
         """Various actions whenever the request has been updated"""
-        # pylint: disable=no-member
         # pylint: disable=unused-argument
         # Do something with anchor
         self.updated = True
@@ -502,7 +500,7 @@ class FOIARequest(models.Model):
 
     def submit(self, appeal=False, snail=False, thanks=False):
         """The request has been submitted.  Notify admin and try to auto submit"""
-        # pylint: disable=no-member
+        from muckrock.task.models import FlaggedTask
         # can email appeal if the agency has an appeal agency which has an email address
         # and can accept emailed appeals
         can_email_appeal = appeal and self.agency and \
@@ -518,7 +516,7 @@ class FOIARequest(models.Model):
         # if agency isnt approved, do not email or snail mail
         # it will be handled after agency is approved
         approved_agency = self.agency and self.agency.status == 'approved'
-        can_email = self.email and not appeal
+        can_email = self.email and not appeal and not self.missing_proxy
         comm = self.last_comm()
         # if the request can be emailed, email it, otherwise send a notice to the admin
         # if this is a thanks, send it as normal but do not change the status
@@ -531,6 +529,22 @@ class FOIARequest(models.Model):
                 self.status = 'ack'
             self._send_email()
             self.update_dates()
+        elif self.missing_proxy:
+            # flag for proxy re-submitting
+            self.status = 'submitted'
+            self.date_processing = date.today()
+            task.models.FlaggedTask.objects.create(
+                    foia=self,
+                    text='This request was filed for an agency requiring a '
+                    'proxy, but no proxy was available.  Please add a suitable '
+                    'proxy for the state and refile it with a note that the '
+                    'request is being filed by a state citizen. Make sure the '
+                    'new request is associated with the original user\'s '
+                    'account. To add someone as a proxy, change their user type '
+                    'to "Proxy" and make sure they properly have their state '
+                    'set on the backend.  This message should only appear when '
+                    'a suitable proxy does not exist.'
+                    )
         elif approved_agency:
             # snail mail it
             if not thanks:
@@ -550,7 +564,6 @@ class FOIARequest(models.Model):
 
     def followup(self, automatic=False, show_all_comms=True):
         """Send a follow up email for this request"""
-        # pylint: disable=no-member
         from muckrock.foia.models.communication import FOIACommunication
 
         if self.date_estimate and date.today() < self.date_estimate:
@@ -627,8 +640,8 @@ class FOIARequest(models.Model):
 
     def _send_email(self, show_all_comms=True):
         """Send an email of the request to its email address"""
-        # pylint: disable=no-member
         # self.email should be set before calling this method
+        from muckrock.foia.tasks import send_fax
 
         from_addr = 'fax' if self.email.endswith('faxaway.com') else self.get_mail_id()
         law_name = self.jurisdiction.get_law_name()
@@ -644,6 +657,8 @@ class FOIARequest(models.Model):
 
         if from_addr == 'fax':
             subject = 'MR#%s-%s - %s' % (self.pk, comm.pk, subject)
+        # max database size
+        subject = subject[:255]
 
         cc_addrs = self.get_other_emails()
         from_email = '%s@%s' % (from_addr, settings.MAILGUN_SERVER_NAME)
@@ -670,7 +685,10 @@ class FOIARequest(models.Model):
         # atach all files from the latest communication
         for file_ in self.communications.reverse()[0].files.all():
             msg.attach(file_.name(), file_.ffile.read())
-        msg.send(fail_silently=False)
+        if from_addr == 'fax':
+            send_fax.apply_async(args=[msg])
+        else:
+            msg.send(fail_silently=False)
 
         # update communication
         comm.set_raw_email(msg.message())
@@ -684,7 +702,6 @@ class FOIARequest(models.Model):
 
     def update_dates(self):
         """Set the due date, follow up date and days until due attributes"""
-        # pylint: disable=no-member
         cal = self.jurisdiction.get_calendar()
         # first submit
         if not self.date_submitted:
@@ -727,7 +744,6 @@ class FOIARequest(models.Model):
 
     def _followup_days(self):
         """How many days do we wait until we follow up?"""
-        # pylint: disable=no-member
         if self.status == 'ack' and self.jurisdiction:
             # if we have not at least been acknowledged yet, set the days
             # to the period required by law
@@ -829,7 +845,6 @@ class FOIARequest(models.Model):
 
     def total_pages(self):
         """Get the total number of pages for this request"""
-        # pylint: disable=no-member
         pages = self.files.aggregate(Sum('pages'))['pages__sum']
         if pages is None:
             return 0
@@ -837,9 +852,33 @@ class FOIARequest(models.Model):
 
     def has_ack(self):
         """Has this request been acknowledged?"""
-        # pylint: disable=no-member
         return self.communications.filter(response=True).exists()
 
+    def proxy_reject(self):
+        """Mark this request as being rejected due to a proxy being required"""
+        from muckrock.task.models import FlaggedTask
+        # mark the agency as requiring a proxy going forward
+        self.agency.requires_proxy = True
+        self.agency.save()
+        # mark to re-file with a proxy
+        FlaggedTask.objects.create(
+            foia=self,
+            text='This request was rejected as requiring a proxy; please refile'
+            ' it with one of our volunteers names and a note that the request is'
+            ' being filed by a state citizen. Make sure the new request is'
+            ' associated with the original user\'s account. To add someone as'
+            ' a proxy, change their user type to "Proxy" and make sure they'
+            ' properly have their state set on the backend. This message should'
+            ' only appear the first time an agency rejects a request for being'
+            ' from an out-of-state resident.'
+            )
+        self.notes.create(
+            author=User.objects.get(username='MuckrockStaff'),
+            note='The request has been rejected with the agency stating that '
+            'you must be a resident of the state. MuckRock is working with our '
+            'in-state volunteers to refile this request, and it should appear '
+            'in your account within a few days.',
+            )
 
     class Meta:
         # pylint: disable=too-few-public-methods

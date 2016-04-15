@@ -4,7 +4,7 @@ Forms for Crowdfund application
 
 from django import forms
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from datetime import date, timedelta
 
 from muckrock.crowdfund.models import Crowdfund
@@ -58,8 +58,8 @@ class CrowdfundForm(forms.ModelForm):
         amount += amount * self.fee_rate
         # since the amount we get should always be a 1-cent relative integer
         # (e.g. $1.00 = 100), we should normalize the amount into a decimal value
-        amount = amount/100
-        return amount
+        amount = Decimal(amount)/100
+        return amount.quantize(Decimal('.01'), rounding=ROUND_DOWN)
 
     def clean_date_due(self):
         """Ensure date is not in the past"""

@@ -10,8 +10,16 @@
 {% block title %}{{ article.title }}{% endblock title %}
 
 {% block content %}
+
 <article class="news detail news--article">
     <header class="news--header">
+        {% with article.projects.last as project %}
+            {% if project.newsletter %}
+                {% newsletter list_id=project.newsletter label=project.newsletter_label cta=project.newsletter_cta %}
+            {% else %}
+                {% newsletter %}
+            {% endif %}
+        {% endwith %}
         {% if article.image %}
         <img src="{% thumbnail article.image 1200x400 crop %}">
         {% endif %}
@@ -48,14 +56,8 @@
     </main>
     <aside class="news--aside">
         {% include 'lib/social.html' with title=article.title %}
+        {% project_manager article %}
         {% tag_manager article %}
-        {% if projects %}
-        <ul class="project-list nostyle">
-        {% for project in projects %}
-            <li>{% include 'lib/project.html' %}</li>
-        {% endfor %}
-        </ul>
-        {% endif %}
         {% if foias %}
         <div class="related-requests">
             <dfn>Related Requests</dfn>
@@ -100,12 +102,3 @@
 {% endblock twitter_card %}
 
 {% endwith %}
-
-{% block scripts %}
-<script type="text/javascript">
-$('.news--main img').loupe({
-    height: 200,
-    width: 200
-});
-</script>
-{% endblock scripts %}

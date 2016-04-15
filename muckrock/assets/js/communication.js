@@ -1,10 +1,14 @@
-function showCommForm(selector) {
+function showCommForm(id) {
+    if (!id) {
+        return;
+    }
+    var form = $(id);
     $('.options.dropdown').removeClass('visible');
     $('.communication-actions').show();
-    $(selector).addClass('visible').siblings().removeClass('visible');
-    $(selector).find('button.cancel').click(function(e){
+    form.addClass('visible').siblings().removeClass('visible');
+    form.find('button.cancel').click(function(e){
         e.preventDefault();
-        $(selector).removeClass('visible');
+        $(id).removeClass('visible');
         $('.communication-actions').hide();
     });
 }
@@ -13,24 +17,22 @@ $('.communication-header').click(function(){
     $(this).closest('.communication').toggleClass('collapsed');
 });
 
-$('.communication-header').find('a').click(function(){
-    window.location.href = $(this).attr('href');
-    return false;
+$('.communication-header .dropdown-list').click(function(event){
+    // Prevent click from propagating up to the communication header.
+    event.stopPropagation();
 });
 
-$('.communication-header').find('.dropdown-list').click(function(){
-    return false;
+var actions = $('.communication-action').map(function() {
+    return '#' + $(this).attr('id');
+}).get();
+
+// Bind to hashchange event
+$(window).on('hashchange', function () {
+    // check if the hash is a target
+    var hash = location.hash;
+    if (actions.indexOf(hash) !== -1) {
+        showCommForm(hash);
+    }
 });
 
-$('.communication .options .svgIcon').click(function(){
-    var thisDropdown = $(this).closest('.options.dropdown');
-    var thisDropdownMenu = $(thisDropdown).find('.dropdown-list');
-    var allOtherCommunications = $(thisDropdown).closest('.communication').siblings();
-    var allOtherDropdowns = $(allOtherCommunications).find('.options.dropdown');
-    $(allOtherDropdowns).removeClass('visible');
-    $(thisDropdown).toggleClass('visible');
-    $(document).click(function(e){
-        $(thisDropdown).removeClass('visible');
-    });
-    return false;
-});
+showCommForm(actions.indexOf(location.hash) !== -1 ? location.hash : '');

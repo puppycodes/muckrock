@@ -3,6 +3,7 @@ Models for the Task application
 """
 
 from django.contrib.auth.models import User
+from django.core.urlresolvers import reverse
 from django.db import models
 from django.db.models import Max, Prefetch, Q
 
@@ -16,6 +17,8 @@ from muckrock.foia.models import FOIACommunication, FOIAFile, FOIANote, FOIARequ
 from muckrock.jurisdiction.models import Jurisdiction
 from muckrock.message.notifications import SupportNotification
 from muckrock.models import ExtractDay, Now
+
+# pylint: disable=missing-docstring
 
 def generate_status_action(foia):
     """Generate activity stream action for agency response"""
@@ -77,7 +80,7 @@ class TaskQuerySet(models.QuerySet):
             for task_type in foia_task_types:
                 tasks += list(task_type.objects
                         .filter(foia=foia)
-                        .select_related('foia', 'resolved_by'))
+                        .select_related('foia__jurisdiction', 'resolved_by'))
         # try matching foia agency with task agency
         if foia.agency:
             tasks += list(NewAgencyTask.objects
@@ -137,7 +140,6 @@ class Task(models.Model):
 
 class GenericTask(Task):
     """A generic task"""
-    # pylint: disable=no-member
     subject = models.CharField(max_length=255)
     body = models.TextField(blank=True)
 
@@ -147,7 +149,6 @@ class GenericTask(Task):
 
 class OrphanTask(Task):
     """A communication that needs to be approved before showing it on the site"""
-    # pylint: disable=no-member
     type = 'OrphanTask'
     reasons = (('bs', 'Bad Sender'),
                ('ib', 'Incoming Blocked'),
@@ -161,6 +162,9 @@ class OrphanTask(Task):
 
     def __unicode__(self):
         return u'Orphan Task'
+
+    def get_absolute_url(self):
+        return reverse('orphan-task', kwargs={'pk': self.pk})
 
     def move(self, foia_pks):
         """Moves the comm and creates a ResponseTask for it"""
@@ -202,14 +206,12 @@ class OrphanTask(Task):
 
 class SnailMailTask(Task):
     """A communication that needs to be snail mailed"""
-    # pylint: disable=no-member
     type = 'SnailMailTask'
     categories = (
         ('a', 'Appeal'),
         ('n', 'New'),
         ('u', 'Update'),
         ('f', 'Followup'),
-        ('p', 'Payment')
     )
     category = models.CharField(max_length=1, choices=categories)
     communication = models.ForeignKey('foia.FOIACommunication')
@@ -219,13 +221,16 @@ class SnailMailTask(Task):
     def __unicode__(self):
         return u'Snail Mail Task'
 
+    def get_absolute_url(self):
+        return reverse('snail-mail-task', kwargs={'pk': self.pk})
+
     def set_status(self, status):
         """Set the status of the comm and FOIA affiliated with this task"""
         comm = self.communication
         comm.status = status
         comm.save()
         comm.foia.status = status
-        comm.foia.save()
+        comm.foia.save(comment='snail mail task')
         comm.foia.update()
 
     def update_date(self):
@@ -264,6 +269,9 @@ class RejectedEmailTask(Task):
     def __unicode__(self):
         return u'Rejected Email Task'
 
+    def get_absolute_url(self):
+        return reverse('rejected-email-task', kwargs={'pk': self.pk})
+
     def agencies(self):
         """Get the agencies who use this email address"""
         return Agency.objects.filter(Q(email__iexact=self.email) |
@@ -271,11 +279,12 @@ class RejectedEmailTask(Task):
 
     def foias(self):
         """Get the FOIAs who use this email address"""
-        return FOIARequest.objects\
+        return (FOIARequest.objects
+                .select_related('jurisdiction')
                 .filter(Q(email__iexact=self.email) |
-                        Q(other_emails__icontains=self.email))\
+                        Q(other_emails__icontains=self.email))
                 .filter(status__in=['ack', 'processed', 'appealing',
-                                    'fix', 'payment'])
+                                    'fix', 'payment']))
 
 
 class StaleAgencyTask(Task):
@@ -286,6 +295,9 @@ class StaleAgencyTask(Task):
     def __unicode__(self):
         return u'Stale Agency Task'
 
+    def get_absolute_url(self):
+        return reverse('stale-agency-task', kwargs={'pk': self.pk})
+
     def resolve(self, user=None):
         """Mark the agency as stale when resolving"""
         self.agency.stale = False
@@ -295,7 +307,6 @@ class StaleAgencyTask(Task):
     def stale_requests(self):
         """Returns a list of stale requests associated with the task's agency"""
         if hasattr(self.agency, 'stale_requests_'):
-            # pylint: disable=no-member
             return self.agency.stale_requests_
         requests = (FOIARequest.objects
                 .get_open()
@@ -336,6 +347,9 @@ class FlaggedTask(Task):
     def __unicode__(self):
         return u'Flagged Task'
 
+    def get_absolute_url(self):
+        return reverse('flagged-task', kwargs={'pk': self.pk})
+
     def flagged_object(self):
         """Return the object that was flagged (should only ever be one, and never none)"""
         if self.foia:
@@ -363,6 +377,9 @@ class NewAgencyTask(Task):
     def __unicode__(self):
         return u'New Agency Task'
 
+    def get_absolute_url(self):
+        return reverse('new-agency-task', kwargs={'pk': self.pk})
+
     def pending_requests(self):
         """Returns the requests to be acted on"""
         return FOIARequest.objects.filter(agency=self.agency).exclude(status='started')
@@ -385,7 +402,7 @@ class NewAgencyTask(Task):
         for foia in self.pending_requests():
             # first switch foia to use replacement agency
             foia.agency = replacement_agency
-            foia.save()
+            foia.save(comment='new agency task')
             comms = foia.communications.all()
             if comms.count():
                 first_comm = comms[0]
@@ -394,7 +411,6 @@ class NewAgencyTask(Task):
 
 class ResponseTask(Task):
     """A response has been received and needs its status set"""
-    # pylint: disable=no-member
     type = 'ResponseTask'
     communication = models.ForeignKey('foia.FOIACommunication')
     created_from_orphan = models.BooleanField(default=False)
@@ -404,6 +420,9 @@ class ResponseTask(Task):
 
     def __unicode__(self):
         return u'Response Task'
+
+    def get_absolute_url(self):
+        return reverse('response-task', kwargs={'pk': self.pk})
 
     def move(self, foia_pks):
         """Moves the associated communication to a new request"""
@@ -418,7 +437,7 @@ class ResponseTask(Task):
             raise ValueError('The task communication is an orphan.')
         foia = comm.foia
         foia.tracking_id = tracking_id
-        foia.save()
+        foia.save(comment='response task tracking id')
 
     def set_status(self, status, set_foia=True):
         """Sets status of comm and foia, with option for only setting comm stats"""
@@ -436,7 +455,7 @@ class ResponseTask(Task):
             if status in ['rejected', 'no_docs', 'done', 'abandoned']:
                 foia.date_done = comm.date
             foia.update()
-            foia.save()
+            foia.save(comment='response task status')
             logging.info('Request #%d status changed to "%s"', foia.id, status)
             generate_status_action(foia)
 
@@ -448,25 +467,38 @@ class ResponseTask(Task):
             raise ValueError('This tasks\'s communication is an orphan.')
         foia = comm.foia
         foia.price = price
-        foia.save()
+        foia.save(comment='response task price')
 
     def set_date_estimate(self, date_estimate):
         """Sets the estimated completion date of the communication's request."""
         foia = self.communication.foia
         foia.date_estimate = date_estimate
         foia.update()
-        foia.save()
+        foia.save(comment='response task date estimate')
         logging.info('Estimated completion date set to %s', date_estimate)
+
+    def proxy_reject(self):
+        """Special handling for a proxy reject"""
+        self.communication.status = 'rejected'
+        self.communication.save()
+        self.communication.foia.status = 'rejected'
+        self.communication.foia.proxy_reject()
+        self.communication.foia.update()
+        self.communication.foia.save(comment='response task proxy reject')
+        generate_status_action(self.communication.foia)
 
 
 class FailedFaxTask(Task):
     """A fax for this communication failed"""
-    # pylint: disable=no-member
     type = 'FailedFaxTask'
     communication = models.ForeignKey('foia.FOIACommunication')
+    reason = models.CharField(max_length=255, blank=True, default='')
 
     def __unicode__(self):
         return u'Failed Fax Task'
+
+    def get_absolute_url(self):
+        return reverse('failed-fax-task', kwargs={'pk': self.pk})
 
 
 class StatusChangeTask(Task):
@@ -479,6 +511,9 @@ class StatusChangeTask(Task):
     def __unicode__(self):
         return u'Status Change Task'
 
+    def get_absolute_url(self):
+        return reverse('status-change-task', kwargs={'pk': self.pk})
+
 
 class CrowdfundTask(Task):
     """Created when a crowdfund is finished"""
@@ -488,6 +523,9 @@ class CrowdfundTask(Task):
     def __unicode__(self):
         return u'Crowdfund Task'
 
+    def get_absolute_url(self):
+        return reverse('crowdfund-task', kwargs={'pk': self.pk})
+
 
 class MultiRequestTask(Task):
     """Created when a multirequest is created and needs approval."""
@@ -496,6 +534,9 @@ class MultiRequestTask(Task):
 
     def __unicode__(self):
         return u'Multi-Request Task'
+
+    def get_absolute_url(self):
+        return reverse('multirequest-task', kwargs={'pk': self.pk})
 
 
 # Not a task, but used by tasks

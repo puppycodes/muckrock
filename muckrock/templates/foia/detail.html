@@ -105,6 +105,7 @@
             <section class="states">
                 {% include 'foia/component/status.html' %}
                 {% include 'foia/component/embargo.html' %}
+                {% project_manager foia %}
                 {% tag_manager foia %}
             </section>
         </section>
@@ -127,23 +128,27 @@
                 </li>
                 <li>
                     <a role="tab" class="tab" aria-controls="files" href="#files">
-                        <span class="counter">{{foia.files.count}}</span>
-                        <span class="label">File{{foia.files.count|pluralize}}</span>
+                        {% with foia.files.count as files_count %}
+                            <span class="counter">{{files_count}}</span>
+                            <span class="label">File{{files_count|pluralize}}</span>
+                        {% endwith %}
                     </a>
                 </li>
                 {% if foia.user == user or user.is_staff %}
                 <li>
                     <a role="tab" class="tab" aria-controls="notes" href="#notes">
-                        <span class="counter">{{foia.notes.count}}</span>
-                        <span class="label">Note{{foia.notes.count|pluralize}}</span>
+                        {% with foia.notes.count as notes_count %}
+                            <span class="counter">{{notes_count}}</span>
+                            <span class="label">Note{{notes_count|pluralize}}</span>
+                        {% endwith %}
                     </a>
                 </li>
                 {% endif %}
-                {% if user_can_edit and task_count or user.is_staff %}
+                {% if user_can_edit and open_task_count or user.is_staff %}
                 <li>
-                    <a role="tab" class="tab {% if task_count %}alert{% endif %}" aria-controls="tasks" href="#tasks">
-                        <span class="counter">{{task_count}}</span>
-                        <span class="label">Task{{task_count|pluralize}}</span>
+                    <a role="tab" class="tab {% if open_task_count %}alert{% endif %}" aria-controls="tasks" href="#tasks">
+                        <span class="counter">{{open_task_count}}</span>
+                        <span class="label">Task{{open_task_count|pluralize}}</span>
                     </a>
                 </li>
                 {% endif %}
@@ -152,6 +157,7 @@
                 {% endif %}
             </ul>
 
+            <!-- COMMUNICATIONS -->
             <section role="tabpanel" class="tab-panel communications" id="comms">
                 <h2 class="tab-panel-heading">Communications</h2>
                 <div class="communications-controls">
@@ -370,7 +376,7 @@
             </section>
             {% endif %}
 
-            {% if task_count and user_can_edit or user.is_staff %}
+            {% if open_task_count and user_can_edit or user.is_staff %}
             <!-- TASKS -->
             <section role="tabpanel" class="tab-panel tasks" id="tasks">
                 <h2 class="tab-panel-heading">Tasks</h2>
@@ -382,10 +388,8 @@
                 {% for task in open_tasks %}
                     {% include 'lib/task.html' with task=task %}
                 {% empty %}
-                    {% if task_count > 0 %}
+                    {% if open_task_count > 0 %}
                 <p class="empty">There are no open tasks for this request.</p>
-                    {% else %}
-                <p class="empty">There are no tasks for this request.</p>
                     {% endif %}
                 {% endfor %}
             </section>
@@ -467,8 +471,6 @@
 
 {% block scripts %}
 <script type="text/javascript">
-    $('#comms-filter').quicksearch('#comms .communications-list .communication');
-    $('#notes-filter').quicksearch('#notes .note');
     $('.datepicker').datepicker({
         maxDate: '+1m',
         minDate: 0,
@@ -479,15 +481,24 @@
         defaultDate: '{{ foia.date_embargo|date:"m/d/Y" }}'
         {% endif %}
     });
-    var datepicker_settings = {
+    $('#id_date_due').datepicker({
         dateFormat: 'yy-mm-dd',
         maxDate: '+1m',
         minDate: 0,
         firstDay: 1,
         hideIfNoPrevNext: true,
         numberOfMonths: 1,
-    };
-    $('input[name=payment_required]').currencyField();
-    $('#id_date_due').datepicker(datepicker_settings);
+    });
+    var foiaId = $('.request.detail').attr('id');
+    if (foiaId != undefined) {
+        foiaId = foiaId.substring(foiaId.indexOf('-') + 1);
+    }
+    if ($('#id_users-autocomplete').length) {
+        $('#id_users-autocomplete').yourlabsAutocomplete().data = {
+            foiaId: foiaId
+        }
+    }
+    $('#comms-filter').quicksearch('#comms .communications-list .communication');
+    $('#notes-filter').quicksearch('#notes .note');
 </script>
 {% endblock scripts %}

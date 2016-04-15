@@ -18,22 +18,24 @@
   2. `touch .settings.sh`
   3. The `.settings.sh` file should **never** be checked in to the repository.
   4. We will send you the (definitely) sensitive information in a (probably) secure manner.
-  5. Inside your VM, add `source ~/muckrock/.settings.sh` the `~/.bashrc` file.
-  6. Inside your VM, run `source ~/.bashrc`.
+  5. Inside your VM, run `source ~/.bashrc`.
 
-4. Populate the database and sync the files from AWS inside the virtual machine
-  1. `cd muckrock`
-  2. `fab populate-db`
-  3. `fab sync-aws`
-
-5. Run the test server inside the virtual machine
-  1. Run `fab mail &` to start a background email server
-  2. Run `fab celery &` to start a background task queue
-  3. Run `fab runserver` to start a server instance
-  4. Navigate your web browser (from the host machine) to `localhost:8000`
+4. Populate the database and sync the files from AWS inside the virtual machine (Run all commands inside the VM)
+  1. Restart the database to pick up correct permissions, `sudo service postgresql`
+  2. Login to heroku toolbelt, `heroku login`
+  3. Pull the database, `fab populate-db`
+  4. Pull files from S3, `fab sync-aws`
 
 You should have a fully populated MuckRock site running locally now.
 The code checked out from GitHub is synced between the virtual machine and your host machine, so you may edit the code using your favorite text editor locally while running the code from within the virtual machine. To run the server again, just follow step 4.
+
+## Run
+
+1. Run `npm run watch &` to start a background Webpack instance
+1. Run `fab mail &` to start a background email server
+2. Run `fab celery &` to start a background task queue
+3. Run `fab runserver` to start a server instance
+4. Navigate your web browser (from the host machine) to `localhost:8000`
 
 ## Test and lint
 

@@ -1,6 +1,5 @@
 .badge {
     display: inline-block;
-    margin-left: $vertical-rhythm/4;
     padding: 0 $vertical-rhythm/4;
     border-radius: 4px;
     background: $color-grey-3;
@@ -10,22 +9,18 @@
     line-height: $font-line-height;
 }
 
-.failure.badge {
-    background: $color-red-dark;
+.red.badge, .failure.badge, .inactive.badge {
+    background: $color-red;
 }
 
-.success.badge {
-    background: $color-green-dark;
-}
-
-.staff.badge {
-    background: $color-blue-dark;
-}
-
-.active.badge {
+.green.badge, .success.badge, .active.badge {
     background: $color-green;
 }
 
-.inactive.badge {
-    background: $color-red;
+.blue.badge, .primary.badge {
+    background: $color-blue;
+}
+
+.blue-dark.badge, .staff.badge {
+    background: $color-blue-dark;
 }

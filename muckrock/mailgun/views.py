@@ -3,6 +3,7 @@ Views for mailgun
 """
 
 from django.conf import settings
+from django.core.cache import cache
 from django.core.mail import EmailMessage
 from django.http import HttpResponse, HttpResponseForbidden
 from django.views.decorators.csrf import csrf_exempt
@@ -81,19 +82,38 @@ def route_mailgun(request):
     if not _verify(post):
         return HttpResponseForbidden()
 
+    # The way spam hero is currently set up, all emails are sent to the same
+    # address, so we must parse to headers to find the recipient.  This can
+    # cause duplicate messages if one email is sent to or CC'd to multiple
+    # addresses @request.muckrock.com.  To try and avoid this, we will cache
+    # the message id, which should be a unique identifier for the message.
+    # If it exists int he cache, we will stop processing this email.  The
+    # ID will be cached for 5 minutes - duplicates should normally be processed
+    # within seconds of each other.
+    message_id = (
+            post.get('Message-ID') or
+            post.get('Message-Id') or
+            post.get('message-id'))
+    if message_id:
+        # cache.add will return False if the key is already present
+        if not cache.add(message_id, 1, 300):
+            return HttpResponse('OK')
+
     p_request_email = re.compile(r'(\d+-\d{3,10})@requests.muckrock.com')
     tos = post.get('To', '') or post.get('to', '')
     ccs = post.get('Cc', '') or post.get('cc', '')
-    name_emails = getaddresses([tos, ccs])
+    name_emails = getaddresses([tos.lower(), ccs.lower()])
     logger.info('Incoming email: %s', name_emails)
     for _, email in name_emails:
         m_request_email = p_request_email.match(email)
         if m_request_email:
-            return _handle_request(request, m_request_email.group(1))
+            _handle_request(request, m_request_email.group(1))
         elif email == 'fax@requests.muckrock.com':
-            return _fax(request)
+            _fax(request)
         elif email.endswith('@requests.muckrock.com'):
-            return _catch_all(request, email)
+            _catch_all(request, email)
+    return HttpResponse('OK')
+
 
 def _handle_request(request, mail_id):
     """Handle incoming mailgun FOI request messages"""
@@ -158,7 +178,7 @@ def _handle_request(request, mail_id):
 
         if foia.status == 'ack':
             foia.status = 'processed'
-        foia.save()
+        foia.save(comment='incoming mail')
         foia.update(comm.anchor())
 
     except FOIARequest.DoesNotExist:
@@ -194,6 +214,7 @@ def _fax(request):
     m_id = p_id.search(subject)
 
     if m_id:
+        # pylint: disable=duplicate-except
         try:
             FOIARequest.objects.get(pk=m_id.group(1))
             comm = FOIACommunication.objects.get(pk=m_id.group(2))
@@ -206,8 +227,13 @@ def _fax(request):
                 comm.opened = True
                 comm.save()
             if subject.startswith('FAILURE:'):
+                reasons = [line for line in
+                        post.get('body-plain', '').split('\n')
+                        if line.startswith('REASON:')]
+                reason = reasons[0] if reasons else ''
                 FailedFaxTask.objects.create(
                     communication=comm,
+                    reason=reason,
                 )
 
     _forward(request.POST, request.FILES)

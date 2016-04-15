@@ -3,10 +3,10 @@ Views for the news application
 """
 
 from django.conf import settings
-from django.contrib import messages
 from django.contrib.auth.models import User
 from django.core.urlresolvers import reverse
 from django.db.models import Prefetch
+from django.http import HttpResponseForbidden
 from django.shortcuts import redirect
 from django.views.generic.list import ListView
 from django.views.generic.dates import YearArchiveView, DateDetailView
@@ -17,6 +17,7 @@ import django_filters
 
 from muckrock.news.models import Article
 from muckrock.news.serializers import ArticleSerializer
+from muckrock.project.forms import ProjectManagerForm
 from muckrock.tags.models import Tag, parse_tags
 
 # pylint: disable=too-many-ancestors
@@ -54,16 +55,24 @@ class NewsDetail(DateDetailView):
     def post(self, request, **kwargs):
         """Handles POST requests on article pages"""
         # pylint:disable=unused-argument
+        article = self.get_object()
+        authorized = self.request.user.is_staff
+        action = request.POST.get('action')
+        if not authorized:
+            return HttpResponseForbidden()
+        if action == 'projects':
+            form = ProjectManagerForm(request.POST)
+            if form.is_valid():
+                projects = form.cleaned_data['projects']
+                article.projects = projects
         tags = request.POST.get('tags')
         if tags:
             tag_set = set()
             for tag in parse_tags(tags):
                 new_tag, _ = Tag.objects.get_or_create(name=tag)
                 tag_set.add(new_tag)
-            self.get_object().tags.set(*tag_set)
-            self.get_object().save()
-            messages.success(request, 'Your tags have been saved to this article.')
-        return redirect(self.get_object())
+            article.tags.set(*tag_set)
+        return redirect(article)
 
 
 class NewsYear(YearArchiveView):
@@ -91,7 +100,6 @@ class ArticleViewSet(viewsets.ModelViewSet):
 
     class Filter(django_filters.FilterSet):
         """API Filter for Articles"""
-        # pylint: disable=no-member
         # pylint: disable=too-few-public-methods
         authors = django_filters.CharFilter(name='authors__username')
         editors = django_filters.CharFilter(name='editors__username')
@@ -107,7 +115,7 @@ class ArticleViewSet(viewsets.ModelViewSet):
     filter_class = Filter
 
     def get_queryset(self):
-        if 'no_editor' in self.request.QUERY_PARAMS:
+        if 'no_editor' in self.request.query_params:
             queryset = self.model.objects.filter(editors=None)
         else:
             queryset = self.model.objects.all()

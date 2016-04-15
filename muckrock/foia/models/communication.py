@@ -85,7 +85,6 @@ class FOIACommunication(models.Model):
 
     def get_absolute_url(self):
         """The url for this object"""
-        # pylint: disable=no-member
         return self.foia.get_absolute_url() + ('#comm-%d' % self.pk)
 
     def save(self, *args, **kwargs):
@@ -101,7 +100,7 @@ class FOIACommunication(models.Model):
                 (self.foia.date_updated is None or
                  self.date.date() > self.foia.date_updated)):
             self.foia.date_updated = self.date.date()
-            self.foia.save()
+            self.foia.save(comment='update date_updated due to new comm')
         super(FOIACommunication, self).save(*args, **kwargs)
 
     def anchor(self):
@@ -196,7 +195,7 @@ class FOIACommunication(models.Model):
             # is on the caller of the resend method
             validate_email(email_address)
             foia.email = email_address
-            foia.save()
+            foia.save(comment='new email from comm resend')
         else:
             snail = True
         foia.submit(snail=snail)
@@ -226,7 +225,7 @@ class FOIACommunication(models.Model):
         if not self.foia:
             raise ValueError('Communication is an orphan and has no associated request.')
         self.foia.email = sender_email
-        self.foia.save()
+        self.foia.save(comment='update primary email from comm')
         return
 
     def _presave_special_handling(self):
@@ -290,12 +289,12 @@ class FOIANote(models.Model):
     note = models.TextField()
 
     def __unicode__(self):
-        # pylint: disable=no-member
+        # pylint: disable=redefined-variable-type
         if self.author:
-            author = self.author
+            user = self.author
         else:
-            author = self.foia.user
-        return 'Note by %s on %s' % (author.get_full_name(), self.foia.title)
+            user = self.foia.user
+        return 'Note by %s on %s' % (user.get_full_name(), self.foia.title)
 
     class Meta:
         # pylint: disable=too-few-public-methods

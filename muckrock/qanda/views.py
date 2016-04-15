@@ -30,6 +30,8 @@ class QuestionList(MRFilterableListView):
     model = Question
     title = 'Questions & Answers'
     template_name = 'lists/question_list.html'
+    default_sort = 'date'
+    default_order = 'desc'
 
     def get_queryset(self):
         """Hides hidden jurisdictions from list"""
@@ -190,7 +192,6 @@ def create_answer(request, slug, idx):
 class QuestionViewSet(viewsets.ModelViewSet):
     """API views for Question"""
     # pylint: disable=too-many-public-methods
-    # pylint: disable=C0103
     # pylint: disable=too-many-ancestors
     queryset = (Question.objects.select_related('user')
             .prefetch_related('tags',

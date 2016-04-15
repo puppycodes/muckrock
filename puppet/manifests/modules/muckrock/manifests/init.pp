@@ -34,7 +34,7 @@ class muckrock {
 	package { 'sass':
 		ensure   => installed,
 		provider => 'gem',
-	} 
+	}
 	package { 'git':
 		ensure => installed,
 	} ->
@@ -93,7 +93,19 @@ class muckrock {
 		requirements => '/home/vagrant/muckrock/requirements.txt',
 		require      => [File['/home/vagrant/ve'],
                          Package['zlib1g-dev'],],
-	} 
+	}
+
+	# nodejs
+
+    class { 'nodejs': }
+
+    # symlink the nodejs folder to node, since Ubuntu
+    # has a weird legacy issue when installing NodeJS
+    file { '/usr/bin/node':
+        ensure => 'link',
+        target => '/usr/bin/nodejs'
+    }
+
 
 	# postgresql
 
@@ -101,13 +113,13 @@ class muckrock {
 		pg_hba_conf_defaults => false,
 	}
 
-	postgresql::server::db { 'muckrock':
-		user     => 'muckrock',
-		password => false,
-	}
-
-	postgresql::server::role { 'muckrock':
+	postgresql::server::role { 'vagrant':
 		createdb => true,
+	} ->
+	postgresql::server::db { 'muckrock':
+		user     => 'vagrant',
+		owner    => 'vagrant',
+		password => false,
 	}
 
 	postgresql::server::pg_hba_rule { 'trust local access':
@@ -116,13 +128,23 @@ class muckrock {
 		user        => 'all',
 		auth_method => 'trust',
 	}
-	
+
 	postgresql::server::pg_hba_rule { 'trust localhost access':
 		type        => 'host',
 		database    => 'all',
 		user        => 'all',
 		address     => '127.0.0.1/32',
 		auth_method => 'trust',
+	}
+
+	postgresql::server::config_entry { 'fsync':
+		value => 'off',
+	}
+	postgresql::server::config_entry { 'synchronous_commit':
+		value => 'off',
+	}
+	postgresql::server::config_entry { 'full_page_writes':
+		value => 'off',
 	}
 
 	# redis

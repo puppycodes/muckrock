@@ -45,6 +45,7 @@ from muckrock.foia.views.comms import (
         resend_comm,
         change_comm_status,
         )
+from muckrock.project.forms import ProjectManagerForm
 from muckrock.qanda.models import Question
 from muckrock.tags.models import Tag
 from muckrock.task.models import Task, FlaggedTask, StatusChangeTask
@@ -206,6 +207,7 @@ class Detail(DetailView):
     def get_object(self, queryset=None):
         """Get the FOIA Request"""
         # pylint: disable=unused-argument
+        # pylint: disable=unsubscriptable-object
         # this is called twice in dispatch, so cache to not actually run twice
         if self._obj:
             return self._obj
@@ -238,7 +240,7 @@ class Detail(DetailView):
         if foia.created_by(user):
             if foia.updated:
                 foia.updated = False
-                foia.save()
+                foia.save(comment='remove updated flag since owner viewed')
         self._obj = foia
         return foia
 
@@ -284,7 +286,8 @@ class Detail(DetailView):
 
         all_tasks = Task.objects.filter_by_foia(foia, user)
         open_tasks = [task for task in all_tasks if not task.resolved]
-        context['task_count'] = len(open_tasks)
+        context['task_count'] = len(all_tasks)
+        context['open_task_count'] = len(open_tasks)
         context['open_tasks'] = open_tasks
         context['stripe_pk'] = settings.STRIPE_PUB_KEY
         context['sidebar_admin_url'] = reverse('admin:foia_foiarequest_change', args=(foia.pk,))
@@ -299,6 +302,7 @@ class Detail(DetailView):
         actions = {
             'status': self._status,
             'tags': self._tags,
+            'projects': self._projects,
             'follow_up': self._follow_up,
             'thanks': self._thank,
             'question': self._question,
@@ -329,16 +333,23 @@ class Detail(DetailView):
             foia.update_tags(request.POST.get('tags'))
         return redirect(foia)
 
-    # pylint: disable=line-too-long
+    def _projects(self, request, foia):
+        """Handle updating projects"""
+        form = ProjectManagerForm(request.POST)
+        if (foia.editable_by(request.user) or request.user.is_staff) and form.is_valid():
+            projects = form.cleaned_data['projects']
+            foia.projects = projects
+        return redirect(foia)
+
     def _status(self, request, foia):
         """Handle updating status"""
         status = request.POST.get('status')
         old_status = foia.get_status_display()
-        if foia.status not in ['started', 'submitted'] and \
-                ((foia.editable_by(request.user) and status in [s for s, _ in STATUS_NODRAFT]) or
-                 (request.user.is_staff and status in [s for s, _ in STATUS])):
+        user_editable = foia.editable_by(request.user) and status in [s for s, _ in STATUS_NODRAFT]
+        staff_editable = request.user.is_staff and status in [s for s, _ in STATUS]
+        if foia.status not in ['started', 'submitted'] and (user_editable or staff_editable):
             foia.status = status
-            foia.save()
+            foia.save(comment='status updated')
             StatusChangeTask.objects.create(
                 user=request.user,
                 old_status=old_status,

@@ -6,17 +6,51 @@ from django.contrib.auth.models import User
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.urlresolvers import reverse
 from django.core.urlresolvers import reverse_lazy
+from django.db.models import Count, Prefetch
 from django.http import Http404
-from django.views.generic import ListView, CreateView, DetailView, UpdateView, DeleteView
+from django.shortcuts import render_to_response
+from django.template import RequestContext
+from django.views.generic import View, CreateView, DetailView, UpdateView, DeleteView
 from django.utils.decorators import method_decorator
 
 from actstream.models import followers
 
-from muckrock.project.models import Project, ProjectMap
+from muckrock.crowdfund.models import Crowdfund
+from muckrock.project.models import Project
 from muckrock.project.forms import ProjectCreateForm, ProjectUpdateForm
+from muckrock.views import MRFilterableListView
 
 
-class ProjectListView(ListView):
+class ProjectExploreView(View):
+    """Provides a space for exploring our different projects."""
+    def get_context_data(self, request, *args, **kwargs):
+        """Gathers and returns a dictionary of context."""
+        # pylint: disable=unused-argument
+        # pylint: disable=no-self-use
+        user = request.user
+        visible_projects = (Project.objects.get_visible(user)
+                .order_by('-featured', 'title')
+                .annotate(request_count=Count('requests', distinct=True))
+                .annotate(article_count=Count('articles', distinct=True))
+                .prefetch_related(
+                    Prefetch('crowdfunds',
+                        queryset=Crowdfund.objects
+                            .order_by('-date_due')
+                            .annotate(contributors_count=Count('payments'))))
+                )
+        context = {
+            'visible': visible_projects,
+        }
+        return context
+
+    def get(self, request, *args, **kwargs):
+        """Renders the template with the correct context."""
+        template = 'project/frontpage.html'
+        context = self.get_context_data(request, *args, **kwargs)
+        return render_to_response(template, context, context_instance=RequestContext(request))
+
+
+class ProjectListView(MRFilterableListView):
     """List all projects"""
     model = Project
     template_name = 'project/list.html'
@@ -80,8 +114,12 @@ class ProjectDetailView(DetailView):
                     ))
         context['followers'] = followers(project)
         context['articles'] = project.articles.get_published()
-        context['maps'] = ProjectMap.objects.filter(project=project)
         context['contributors'] = project.contributors.select_related('profile')
+        context['user_is_experimental'] = user.is_authenticated() and user.profile.experimental
+        context['newsletter_label'] = ('Subscribe to the project newsletter'
+                                      if not project.newsletter_label else project.newsletter_label)
+        context['newsletter_cta'] = ('Get updates delivered to your inbox'
+                                    if not project.newsletter_cta else project.newsletter_cta)
         return context
 
     def dispatch(self, *args, **kwargs):
@@ -139,15 +177,3 @@ class ProjectDeleteView(ProjectPermissionsMixin, DeleteView):
     model = Project
     success_url = reverse_lazy('index')
     template_name = 'project/delete.html'
-
-
-class ProjectMapDetailView(DetailView):
-    """View a project map"""
-    model = ProjectMap
-    template_name = 'project/map.html'
-
-    @method_decorator(login_required)
-    @method_decorator(user_passes_test(lambda u: u.is_staff))
-    def dispatch(self, *args, **kwargs):
-        """At the moment, only staff are allowed to view a project map."""
-        return super(ProjectMapDetailView, self).dispatch(*args, **kwargs)
