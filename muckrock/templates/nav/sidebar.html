@@ -118,7 +118,7 @@
             </ul>
             {% endif %}
             {% if actionable_requests.agency %}
-            <a class="actionable agency" href="{% url 'foia-list' %}?agency={{ user.agencyprofile.agency.pk }}&status=processed">
+            <a class="actionable agency" href="{% url 'foia-list' %}?agency={{ user.agencyprofile.agency.pk }}&status=processed,ack">
                 <span class="blue counter">{{ actionable_requests.agency|length }}</span>
                 Agency Request{{ actionable_requests.agency|length|pluralize }}
             </a>
@@ -127,7 +127,7 @@
                 <li><a class="truncate" href="{% url 'foia-detail' jurisdiction=foia.jurisdiction.slug jidx=foia.jurisdiction.pk idx=foia.pk slug=foia.slug %}">{{ foia.title }}</a></li>
                 {% endfor %}
                 {% if actionable_requests.agency|length > 10 %}
-                <li><a class="more" href="{% url 'foia-list' %}?agency={{ user.agencyprofile.agency.pk }}&status=processed">{{actionable_requests.agency|slice:"10:"|length}} More</a></li>
+                <li><a class="more" href="{% url 'foia-list' %}?agency={{ user.agencyprofile.agency.pk }}&status=processed,ack">{{actionable_requests.agency|slice:"10:"|length}} More</a></li>
                 {% endif %}
             </ul>
             {% endif %}

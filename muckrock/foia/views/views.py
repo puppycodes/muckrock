@@ -76,7 +76,7 @@ class RequestList(MRFilterableListView):
     def get_filters(self):
         """Adds request-specific filter fields"""
         base_filters = super(RequestList, self).get_filters()
-        new_filters = [{'field': 'status', 'lookup': 'exact'}]
+        new_filters = [{'field': 'status', 'lookup': 'in'}]
         return base_filters + new_filters
 
     def get_context_data(self, **kwargs):
@@ -94,6 +94,13 @@ class RequestList(MRFilterableListView):
                 'title', 'slug', 'status', 'date_submitted', 'date_due',
                 'date_updated', 'date_processing', 'jurisdiction__slug')
         return objects.get_viewable(self.request.user)
+
+    def clean_filter_value(self, filter_key, filter_value):
+        """Clean status field"""
+        if filter_key == 'status':
+            return filter_value.split(',') if filter_value else filter_value
+
+        return super(RequestList, self).clean_filter_value(filter_key, filter_value)
 
 
 @class_view_decorator(login_required)
