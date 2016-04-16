@@ -53,7 +53,14 @@ class FOIARequestQuerySet(models.QuerySet):
 
         # Requests are visible if you own them, have view or edit permissions,
         # or if they are not drafts and not embargoed
-        if user.is_authenticated():
+        if user.is_authenticated() and user.profile.acct_type == 'agency':
+            return self.filter(
+                    Q(user=user) |
+                    Q(edit_collaborators=user) |
+                    Q(read_collaborators=user) |
+                    Q(agency=user.agencyprofile.agency) |
+                    (~Q(status='started') & ~Q(embargo=True)))
+        elif user.is_authenticated():
             return self.filter(
                     Q(user=user) |
                     Q(edit_collaborators=user) |
@@ -398,10 +405,8 @@ class FOIARequest(models.Model):
                     user.profile.acct_type == 'agency' and
                     user.agencyprofile.agency == self.agency))
         request_is_private = self.status == 'started' or self.embargo
-        viewable_by_user = True
-        if request_is_private and not user_has_access:
-            viewable_by_user = False
-        return viewable_by_user
+
+        return user_has_access or not request_is_private
 
     ## Access key
 
