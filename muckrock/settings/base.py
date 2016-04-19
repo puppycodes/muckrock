@@ -287,6 +287,7 @@ MONTHLY_REQUESTS = {
     'proxy': 20,
     'org': 50,
     'robot': 0,
+    'agency': 0,
 }
 
 BUNDLED_REQUESTS = {
