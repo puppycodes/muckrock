@@ -17,12 +17,14 @@ from muckrock.agency.models import Agency, STALE_DURATION
 from muckrock.foia.models import STATUS, FOIARequest, FOIACommunication, FOIAFile
 from muckrock.models import ExtractDay, Now
 from muckrock.task.forms import (
-    TaskFilterForm, FlaggedTaskForm, StaleAgencyTaskForm, ResponseTaskForm
+    TaskFilterForm, FlaggedTaskForm, StaleAgencyTaskForm, ResponseTaskForm,
+    ProjectReviewTaskForm
     )
 from muckrock.task.models import (
     Task, OrphanTask, SnailMailTask, RejectedEmailTask,
     StaleAgencyTask, FlaggedTask, NewAgencyTask, ResponseTask,
-    CrowdfundTask, MultiRequestTask, StatusChangeTask, FailedFaxTask
+    CrowdfundTask, MultiRequestTask, StatusChangeTask, FailedFaxTask,
+    ProjectReviewTask
     )
 from muckrock.views import MRFilterableListView
 
@@ -37,6 +39,7 @@ def count_tasks():
         rejected=Count('rejectedemailtask'),
         stale_agency=Count('staleagencytask'),
         flagged=Count('flaggedtask'),
+        projectreview=Count('projectreviewtask'),
         new_agency=Count('newagencytask'),
         response=Count('responsetask'),
         status_change=Count('statuschangetask'),
@@ -291,14 +294,41 @@ class FlaggedTaskList(TaskList):
         """Special post handler for FlaggedTasks"""
         if request.POST.get('reply'):
             reply_form = FlaggedTaskForm(request.POST)
-            if reply_form.is_valid():
+            if reply_form.is_valid() and task.user:
                 text = reply_form.cleaned_data['text']
                 task.reply(text)
+            elif reply_form.is_valid():
+                messages.error(request, 'Cannot reply - task has no user')
+                return
             else:
                 messages.error(request, 'The form is invalid')
                 return
         if request.POST.get('resolve'):
             task.resolve(request.user)
+
+
+class ProjectReviewTaskList(TaskList):
+    model = ProjectReviewTask
+    title = 'Pending Projects'
+    queryset = (ProjectReviewTask.objects.select_related('project')
+                                        .prefetch_related('project__requests')
+                                        .prefetch_related('project__articles')
+                                        .prefetch_related('project__contributors'))
+
+    def task_post_helper(self, request, task):
+        """Special post handler for ProjectReviewTasks"""
+        form = ProjectReviewTaskForm(request.POST)
+        if form.is_valid():
+            text = form.cleaned_data['reply']
+            action = request.POST.get('action', None)
+            if action == 'reply':
+                task.reply(text)
+            elif action == 'approve':
+                task.approve(text)
+                task.resolve(request.user)
+            elif action == 'reject':
+                task.reject(text)
+                task.resolve(request.user)
 
 
 class NewAgencyTaskList(TaskList):

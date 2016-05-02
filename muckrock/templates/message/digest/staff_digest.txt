@@ -1,17 +1,19 @@
+{% extends 'message/base.txt' %}
+{% block body %}
 {{ salutation }}, {{ user.first_name }}. Here's what happened on MuckRock yesterday ({{ yesterday|date:'m/d/y' }}):
 
---------------------------
+-------------------------
 Stats
-..........................
+- - - - - - - - - - - - -
 
 Statistic, Today's value, Change from yesterday
 {% for stat in activity.stats %}
 {{ stat.name }}, {{ stat.current }}, {% if stat.delta > 0 %}+{% endif %}{{stat.delta}}
 {% endfor %}
 
---------------------------
+-------------------------
 Communications
-..........................
+- - - - - - - - - - - - -
 
 Sent, {{ activity.comms.sent }}
 Received, {{ activity.comms.received }}
@@ -27,4 +29,17 @@ Fax, {{ sent.format.fax }}, ${{ sent.cost.fax }}, ${{ sent.expense.fax }}, ${{se
 Post, {{ sent.format.mail }}, ${{ sent.cost.mail }}, ${{ sent.expense.mail }}, ${{sent.trailing.mail}}
 {% endwith %}
 
+-------------------------
+Active Crowdfunds
+- - - - - - - - - - - - -
+
+{% for crowdfund in crowdfunds %}
+{% with crowdfund.get_crowdfund_object as object %}
+* {{object}} ({{object.get_aboslute_url}})
+{% endwith %}
+{% endfor %}
+
+=========================
+
 That's all for today. {{ signoff }} and see you tomorrow.
+{% endblock %}
