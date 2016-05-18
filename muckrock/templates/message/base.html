@@ -103,6 +103,9 @@
                 font-size: .875em;
                 line-height: 1.5em;
             }
+            .footer p {
+                margin: 0;
+            }
             /* Utility */
             .hide {
                 display: none !important;
@@ -156,11 +159,44 @@
             .blue.badge {
                 background: #4582CC;
             }
-            .completed {
-                color: #52CC66;
+            /* Digest */
+            table.digest td {
+                padding: 0;
+                border: none;
+                vertical-align: top;
             }
-            .rejected, .unsuccessful, .require.action {
-                color: #CC5C52;
+            table.digest .request-category {
+                width: 25%;
+                padding-right: 1em;
+            }
+            table.digest .badge {
+                margin: 0;
+                padding: .2em;
+            }
+            /* Receipt */
+            .receipt {
+                border: 1px solid #B5BDC7;
+            }
+            .receipt table {
+                margin: 0;
+            }
+            .receipt td {
+                border: none;
+            }
+            .receipt td:last-child {
+                text-align: right;
+            }
+            .purchase-data {
+                padding: .5em;
+            }
+            .purchase-data p {
+                margin-bottom: 0;
+                font-size: 12px;
+                line-height: 1.5em;
+            }
+            .total {
+                font-weight: bold;
+                border-top: 1px solid #B5BDC7;
             }
         </style>
     </head>
@@ -190,8 +226,7 @@
                                     <div class="footer">
                                         {% block settings %}{% endblock %}
                                         {% if user %}<p>This email was sent to <a href="mailto:{{user.email}}">{{user.email}}</a>.{% endif %}
-                                        <p>Add <a href="mailto:info@muckrock.com">info@muckrock.com</a> to your address book to prevent us from being marked as spam.</p>
-                                        <p>We always welcome your feedback. Simply reply to this email or write to <a href="mailto:info@muckrock.com">info@muckrock.com</a>.</p>
+                                        <p>Add <a href="mailto:info@muckrock.com">info@muckrock.com</a> to your address book to prevent our emails from being marked as spam.</p>
                                         <p>MuckRock, 411A Highland Avenue, Somerville, MA 02144</p>
                                     </div>
                                 </div>

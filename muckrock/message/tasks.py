@@ -86,15 +86,15 @@ def send_invoice_receipt(invoice_id):
     customer = profile.customer()
     subscription = customer.subscriptions.retrieve(invoice.subscription)
     try:
-        receipt_classes = {
-            'pro': receipts.ProSubscriptionReceipt,
-            'org': receipts.OrgSubscriptionReceipt
+        receipt_functions = {
+            'pro': receipts.pro_subscription_receipt,
+            'org': receipts.org_subscription_receipt
         }
-        receipt_class = receipt_classes[subscription.plan.id]
+        receipt_function = receipt_functions[subscription.plan.id]
     except KeyError:
         logger.warning('Invoice charged for unrecognized plan: %s', subscription.plan.name)
-        receipt_class = receipts.GenericReceipt
-    receipt = receipt_class(profile.user, charge)
+        receipt_function = receipts.generic_receipt
+    receipt = receipt_function(profile.user, charge)
     receipt.send(fail_silently=False)
 
 @task(name='muckrock.message.tasks.send_charge_receipt')
@@ -117,20 +117,17 @@ def send_charge_receipt(charge_id):
         user = User.objects.get(email=user_email)
     except User.DoesNotExist:
         user = None
-    # every charge type should have a corresponding receipt class
-    # if there is a charge type without a class, fallback to a generic receipt
-    # this list of receipt classes should be made into a setting...later
     try:
-        receipt_classes = {
-            'request-purchase': receipts.RequestPurchaseReceipt,
-            'request-fee': receipts.RequestFeeReceipt,
-            'request-multi': receipts.MultiRequestReceipt,
-            'crowdfund-payment': receipts.CrowdfundPaymentReceipt,
+        receipt_functions = {
+            'request-purchase': receipts.request_purchase_receipt,
+            'request-fee': receipts.request_fee_receipt,
+            'crowdfund-payment': receipts.crowdfund_payment_receipt,
         }
-        receipt_class = receipt_classes[user_action]
+        receipt_function = receipt_functions[user_action]
     except KeyError:
-        receipt_class = receipts.GenericReceipt
-    receipt = receipt_class(user, charge)
+        logger.warning('Unrecognized charge: %s', user_action)
+        receipt_function = receipts.generic_receipt
+    receipt = receipt_function(user, charge)
     receipt.send(fail_silently=False)
 
 def get_subscription_type(invoice):
@@ -270,6 +267,22 @@ def support(user, message, _task):
         extra_context=context,
         text_template='message/notification/support.txt',
         html_template='message/notification/support.html',
-        subject=u'Verify your email'
+        subject=u'Support #%d' % _task.id
+    )
+    notification.send(fail_silently=False)
+
+@task(name='muckrock.message.tasks.notify_project_contributor')
+def notify_project_contributor(user, project, added_by):
+    """Notify a user that they were added as a contributor to a project."""
+    context = {
+        'project': project,
+        'added_by': added_by
+    }
+    notification = TemplateEmail(
+        user=user,
+        extra_context=context,
+        text_template='message/notification/project.txt',
+        html_template='message/notification/project.html',
+        subject=u'Added to a project'
     )
     notification.send(fail_silently=False)
