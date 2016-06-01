@@ -8,12 +8,13 @@ from django.core.mail import EmailMessage
 from django.db import models
 from django.template.loader import render_to_string
 
-import datetime
+from datetime import datetime
 import dbsettings
 from easy_thumbnails.fields import ThumbnailerImageField
 from itertools import groupby
 from localflavor.us.models import PhoneNumberField, USStateField
 from lot.models import LOT
+import re
 import stripe
 from urllib import urlencode
 
@@ -43,6 +44,52 @@ ACCT_TYPES = [
 ]
 
 PAYMENT_FEE = .05
+
+def miniregister(full_name, email, password):
+    """
+    Create a new user from just their full name and email and return the user.
+    - compress first and last name to create username
+        - username must be unique
+        - if the username already exists, add a number to the end
+    - given the username, email, and password, create a new User
+    - split the full name string to get the first and last names
+    - create a Profile for the user
+    - send the user a welcome email with a link to reset their password
+    """
+    from muckrock.message.tasks import welcome_miniregister
+    full_name = full_name.strip()
+    # create unique username thats at most 30 characters
+    # strips illegal characters from username
+    base_username = re.sub(r'[^\w\-.@]', '', full_name)[:30]
+    username = base_username
+    num = 1
+    while User.objects.filter(username__iexact=username).exists():
+        postfix = str(num)
+        username = '%s%s' % (base_username[:30 - len(postfix)], postfix)
+        num += 1
+    # infer first and last names from the full name
+    if ' ' in full_name:
+        first_name, last_name = full_name.rsplit(' ', 1)
+        first_name = first_name[:30]
+        last_name = last_name[:30]
+    else:
+        first_name = full_name[:30]
+        last_name = ''
+    # create a new User
+    user = User.objects.create_user(username, email, password)
+    user.first_name = first_name
+    user.last_name = last_name
+    user.save()
+    # create a new Profile
+    Profile.objects.create(
+        user=user,
+        acct_type='basic',
+        monthly_requests=settings.MONTHLY_REQUESTS.get('basic', 0),
+        date_update=datetime.now()
+    )
+    # send the new user a welcome email
+    welcome_miniregister.delay(user)
+    return user
 
 class Profile(models.Model):
     """User profile information for muckrock"""
@@ -181,11 +228,11 @@ class Profile(models.Model):
 
     def get_monthly_requests(self):
         """Get the number of requests left for this month"""
-        not_this_month = self.date_update.month != datetime.datetime.now().month
-        not_this_year = self.date_update.year != datetime.datetime.now().year
+        not_this_month = self.date_update.month != datetime.now().month
+        not_this_year = self.date_update.year != datetime.now().year
         # update requests if they have not yet been updated this month
         if not_this_month or not_this_year:
-            self.date_update = datetime.datetime.now()
+            self.date_update = datetime.now()
             self.monthly_requests = settings.MONTHLY_REQUESTS.get(self.acct_type, 0)
             self.save()
         return self.monthly_requests
@@ -290,7 +337,7 @@ class Profile(models.Model):
         # modify the profile object (should this be part of a webhook callback?)
         self.subscription_id = subscription.id
         self.acct_type = 'pro'
-        self.date_update = datetime.datetime.now()
+        self.date_update = datetime.now()
         self.monthly_requests = settings.MONTHLY_REQUESTS.get('pro', 0)
         self.save()
         return subscription
