@@ -27,7 +27,7 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
 
-DEFAULT_FROM_EMAIL = 'info@muckrock.com'
+DEFAULT_FROM_EMAIL = 'MuckRock <info@muckrock.com>'
 
 DOGSLOW = True
 DOGSLOW_LOG_TO_FILE = False
@@ -39,7 +39,6 @@ DOGSLOW_LOG_TO_SENTRY = True
 
 ADMINS = (
     ('Mitchell Kotler', 'mitch@muckrock.com'),
-    ('Allan Lasser', 'allan@muckrock.com'),
 )
 
 MANAGERS = ADMINS
@@ -128,14 +127,15 @@ TEMPLATE_CONTEXT_PROCESSORS = (
     'django.contrib.messages.context_processors.messages',
     'muckrock.sidebar.context_processors.sidebar_info',
     'muckrock.context_processors.google_analytics',
+    'muckrock.context_processors.domain',
 )
 
 MIDDLEWARE_CLASSES = (
     'djangosecure.middleware.SecurityMiddleware',
     'dogslow.WatchdogMiddleware',
     'django.middleware.gzip.GZipMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
     'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'lot.middleware.LOTMiddleware',
@@ -373,7 +373,7 @@ LOGGING = {
             'propagate': False,
         },
         'muckrock': {
-            'handlers': ['console', 'mail_admins', 'sentry'],
+            'handlers': ['console', 'sentry'],
             'level': 'INFO',
         },
         'django.db.backends': {

@@ -14,9 +14,12 @@
     border: $base-border-width solid $color-grey;
 }
 
+@mixin box-shadow() {
+    box-shadow: 0px 4px 8px 0px $color-grey;
+}
+
 @mixin textbox() {
     @include box-sizing(border-box);
-    @include outer-container;
     @include border;
     @include border-radius;
     border-color: $color-grey;

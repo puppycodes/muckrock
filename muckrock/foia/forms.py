@@ -110,22 +110,19 @@ class AgencyMultipleChoiceField(forms.MultipleChoiceField):
 class MultiRequestForm(forms.ModelForm):
     """A form for a multi-request"""
 
-    title = forms.CharField(
-        widget=forms.TextInput(attrs={'placeholder': 'Pick a Title'})
-    )
     requested_docs = forms.CharField(
         label='Request',
         widget=forms.Textarea()
-    )
-    agencies = AgencyMultipleChoiceField(
-        label='Agencies',
-        choices=()
     )
 
     class Meta:
         # pylint: disable=too-few-public-methods
         model = FOIAMultiRequest
         fields = ['title', 'requested_docs', 'agencies']
+        widgets = {
+            'title': forms.TextInput(attrs={'placeholder': 'Pick a Title'}),
+            'agencies': autocomplete_light.MultipleChoiceWidget('AgencyMultiRequestAutocomplete')
+        }
 
 class MultiRequestDraftForm(forms.ModelForm):
     """Presents info from created multi-request for editing"""
@@ -217,7 +214,15 @@ class FOIADeleteForm(forms.Form):
         help_text='This cannot be undone!'
     )
 
-FOIAFileFormSet = forms.models.modelformset_factory(FOIAFile, fields=('ffile',))
+class FOIAFileForm(forms.ModelForm):
+    """A form for a FOIA File"""
+    ffile = forms.FileField(label='File', required=False)
+
+    class Meta:
+        model = FOIAFile
+        fields = ['ffile']
+
+FOIAFileFormSet = forms.models.modelformset_factory(FOIAFile, form=FOIAFileForm)
 
 class FOIANoteForm(forms.ModelForm):
     """A form for a FOIA Note"""
@@ -235,6 +240,7 @@ class FOIAAdminFixForm(forms.ModelForm):
 
     from_email = forms.CharField(
         label='From',
+        initial='MuckRock',
         required=False,
         help_text='Leaving blank will fill in with request owner.'
     )

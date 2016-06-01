@@ -5,7 +5,7 @@ Views for the FOIA application
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.models import User
-from django.contrib.auth.decorators import login_required, user_passes_test
+from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.urlresolvers import reverse
 from django.db.models import Prefetch
@@ -317,6 +317,7 @@ class Detail(DetailView):
                 user.is_authenticated() and
                 user.profile.acct_type == 'agency' and
                 user.agencyprofile.agency == foia.agency)
+        context['files'] = foia.files.all()[:50]
         if foia.sidebar_html:
             messages.info(self.request, foia.sidebar_html)
         return context
@@ -569,6 +570,7 @@ class Detail(DetailView):
             messages.success(request, '%s can now edit this request.' % user.first_name)
         return redirect(foia)
 
+
 def redirect_old(request, jurisdiction, slug, idx, action):
     """Redirect old urls to new urls"""
     # pylint: disable=unused-variable
@@ -587,7 +589,7 @@ def redirect_old(request, jurisdiction, slug, idx, action):
 
     return redirect('/foi/%(jurisdiction)s-%(jidx)s/%(slug)s-%(idx)s/%(action)s/' % locals())
 
-@user_passes_test(lambda u: u.is_staff)
+
 def acronyms(request):
     """A page with all the acronyms explained"""
     status_dict = dict(STATUS)

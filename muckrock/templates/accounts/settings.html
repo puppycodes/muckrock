@@ -18,22 +18,23 @@
         </dl>
     </header>
     <main>
-        <form method="post" action="?type=profile" class="profile form" id="profile">
+        <form enctype="multipart/form-data" method="post" class="profile form" id="profile">
             {% csrf_token %}
             <h2>Profile</h2>
             <input type="hidden" name="action" value="profile" />
             <div class="fields">
-            {% for field in profile_form.visible_fields %}
-                <fieldset class="{{ field.label|lower }} field{% if field.field.required %} required{% endif %}{% if field.errors %} errors{%endif%}">
-                    <label for="{{ field.auto_id }}">{{field.label}}</label>
-                    {{ field.errors }}
-                    {{ field }}
-                    {% if field.help_text %}<p class="default"><small>{{ field.help_text }}</small></p>{% endif %}
-                </fieldset>
-            {% endfor %}
+                <div class="full-name">
+                    {% include 'lib/pattern/field.html' with field=profile_form.first_name %}
+                    {% include 'lib/pattern/field.html' with field=profile_form.last_name %}
+                </div>
+                <div class="other-info">
+                    {% include 'lib/pattern/field.html' with field=profile_form.twitter %}
+                    {% include 'lib/pattern/field.html' with field=profile_form.location %}
+                </div>
+                {% include 'lib/pattern/imagefield.html' with field=profile_form.avatar image=request.user.profile.avatar %}
             </div>
             <footer>
-                <button type="submit" class="primary">Update profile</button>
+                <button type="submit" class="primary button">Update profile</button>
             </footer>
         </form>
         <form method="post" class="email form" id="email">
@@ -42,16 +43,11 @@
             <h2>Email</h2>
             <div class="fields">
             {% for field in email_form.visible_fields %}
-                <fieldset class="{{ field.label|lower }} field{% if field.field.required %} required{% endif %}{% if field.errors %} errors{%endif%}">
-                    <label for="{{ field.auto_id }}">{{field.label}}</label>
-                    {{ field.errors }}
-                    {{ field }}
-                    {% if field.help_text %}<p class="default"><small>{{ field.help_text }}</small></p>{% endif %}
-                </fieldset>
+                {% include 'lib/pattern/field.html' %}
             {% endfor %}
             </div>
             <footer>
-                <button type="submit" class="primary">Update email</button>
+                <button type="submit" class="primary button">Update email</button>
                 {% if request.user.profile.email_confirmed %}
                 <span>Verified</span>
                 {% else %}
@@ -89,7 +85,7 @@
                             <p>Expires {{credit_card.exp_month}}/{{credit_card.exp_year}}</p>
                         </td>
                         <td>
-                            <button type="submit">Update Credit Card</button>
+                            <button class="button" type="submit">Update Credit Card</button>
                         </td>
                     <tr>
                     {% endif %}

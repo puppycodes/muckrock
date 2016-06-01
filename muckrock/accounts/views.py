@@ -8,7 +8,6 @@ from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.core.urlresolvers import reverse
-from django.core.mail import send_mail
 from django.http import (
         HttpResponse,
         HttpResponseBadRequest,
@@ -17,7 +16,6 @@ from django.http import (
         )
 from django.shortcuts import render_to_response, get_object_or_404, redirect
 from django.template import RequestContext
-from django.template.loader import render_to_string
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import TemplateView, FormView
@@ -50,6 +48,7 @@ from muckrock.message.tasks import (
         send_charge_receipt,
         send_invoice_receipt,
         failed_payment,
+        email_verify,
         welcome,
         gift,
         )
@@ -241,6 +240,14 @@ def profile_settings(request):
         'email': EmailSettingsForm,
         'billing': BillingPreferencesForm
     }
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action:
+            form = settings_forms[action]
+            form = form(request.POST, request.FILES, instance=user_profile)
+            if form.is_valid():
+                form.save()
+                messages.success(request, 'Your settings have been updated.')
     profile_initial = {
         'first_name': request.user.first_name,
         'last_name': request.user.last_name,
@@ -258,18 +265,6 @@ def profile_settings(request):
         'current_plan': current_plan,
         'credit_card': user_profile.card()
     }
-
-    if request.method == 'POST':
-        action = request.POST.get('action')
-        if action:
-            form = settings_forms[action]
-            form = form(request.POST, instance=user_profile)
-            if form.is_valid():
-                form.save()
-                messages.success(request, 'Your settings have been updated.')
-            # override the existing form in the context
-            context[action + '_form'] = form
-
     return render_to_response(
         'accounts/settings.html',
         context,
@@ -326,38 +321,26 @@ def buy_requests(request, username=None):
         logger.warn('Payment error: %s', exception, exc_info=sys.exc_info())
     return redirect(url_redirect)
 
-
 @login_required
 def verify_email(request):
     """Verifies a user's email address"""
     user = request.user
-    prof = user.profile
+    _profile = user.profile
     key = request.GET.get('key')
-    if not prof.email_confirmed:
+    if not _profile.email_confirmed:
         if key:
-            if key == prof.confirmation_key:
-                prof.email_confirmed = True
-                prof.save()
+            if key == _profile.confirmation_key:
+                _profile.email_confirmed = True
+                _profile.save()
                 messages.success(request, 'Your email address has been confirmed.')
             else:
                 messages.error(request, 'Your confirmation key is invalid.')
         else:
-            send_mail(
-                'Verify Your MuckRock Email',
-                render_to_string('text/user/verify_email.txt', {
-                    'user': user,
-                    'verification_link': user.profile.wrap_url(
-                        reverse('acct-verify-email'),
-                        key=prof.generate_confirmation_key())
-                }),
-                'info@muckrock.com',
-                [user.email],
-                fail_silently=False
-            )
+            email_verify.delay(user)
             messages.info(request, 'We just sent you an email containing your verification link.')
     else:
         messages.warning(request, 'Your email is already confirmed, no need to verify again!')
-    return redirect(prof)
+    return redirect(_profile)
 
 def profile(request, username=None):
     """View a user's profile"""
@@ -380,7 +363,7 @@ def profile(request, username=None):
     recent_requests = requests.order_by('-date_submitted')[:5]
     recent_completed = requests.filter(status='done').order_by('-date_done')[:5]
     articles = Article.objects.get_published().filter(authors=user)[:5]
-    projects = Project.objects.get_for_contributor(user).get_visible(request.user)
+    projects = Project.objects.get_for_contributor(user).get_visible(request.user)[:3]
     context = {
         'user_obj': user,
         'profile': user_profile,
@@ -407,15 +390,18 @@ def stripe_webhook(request):
         event_json = json.loads(request.body)
         event_id = event_json['id']
         event_type = event_json['type']
-        event_object_id = event_json['data']['object']['id']
+        if event_type.startswith(('charge', 'invoice')):
+            event_object_id = event_json['data']['object']['id']
+        else:
+            event_object_id = ''
     except (TypeError, ValueError, SyntaxError) as exception:
         logging.error('Error parsing JSON: %s', exception)
         return HttpResponseBadRequest()
     except KeyError as exception:
-        logging.error('Unexpected dictionary structure: %s', exception)
+        logging.error('Unexpected dictionary structure: %s in %s', exception, event_json)
         return HttpResponseBadRequest()
     # If we've made it this far, then the webhook message was successfully sent!
-    # Now it's up to us to act on it.'
+    # Now it's up to us to act on it.
     success_msg = (
         'Received Stripe webhook\n'
         '\tfrom:\t%(address)s\n'
