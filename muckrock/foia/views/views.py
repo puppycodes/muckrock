@@ -15,11 +15,12 @@ from django.template.defaultfilters import slugify
 from django.template import RequestContext
 from django.views.generic.detail import DetailView
 
-import actstream
+from actstream.models import following
 from datetime import datetime, timedelta
 import json
 import logging
 
+from muckrock.accounts.models import Notification
 from muckrock.agency.forms import AgencyForm
 from muckrock.crowdfund.forms import CrowdfundForm
 from muckrock.foia.codes import CODES
@@ -47,8 +48,10 @@ from muckrock.foia.views.comms import (
         )
 from muckrock.project.forms import ProjectManagerForm
 from muckrock.qanda.models import Question
+from muckrock.qanda.forms import QuestionForm
 from muckrock.tags.models import Tag
 from muckrock.task.models import Task, FlaggedTask, StatusChangeTask
+from muckrock.utils import new_action
 from muckrock.views import class_view_decorator, MRFilterableListView
 
 # pylint: disable=too-many-ancestors
@@ -149,7 +152,7 @@ class FollowingRequestList(RequestList):
     """List of all FOIA requests the user is following"""
     def get_queryset(self):
         """Limits FOIAs to those followed by the current user"""
-        objects = actstream.models.following(self.request.user, FOIARequest)
+        objects = following(self.request.user, FOIARequest)
         # actstream returns a list of objects, so we have to turn it into a queryset
         pk_list = [_object.pk for _object in objects if _object]
         objects = FOIARequest.objects.filter(pk__in=pk_list)
@@ -253,10 +256,6 @@ class Detail(DetailView):
         valid_access_key = self.request.GET.get('key') == foia.access_key
         if not foia.viewable_by(user) and not valid_access_key:
             raise Http404()
-        if foia.created_by(user):
-            if foia.updated:
-                foia.updated = False
-                foia.save(comment='remove updated flag since owner viewed')
         self._obj = foia
         return foia
 
@@ -289,6 +288,7 @@ class Detail(DetailView):
         })
         context['note_form'] = FOIANoteForm()
         context['access_form'] = FOIAAccessForm()
+        context['question_form'] = QuestionForm(user=user, initial={'foia': foia})
         context['crowdfund_form'] = CrowdfundForm(initial={
             'name': u'Crowdfund Request: %s' % unicode(foia),
             'description': 'Help cover the request fees needed to free these docs!',
@@ -321,6 +321,16 @@ class Detail(DetailView):
         if foia.sidebar_html:
             messages.info(self.request, foia.sidebar_html)
         return context
+
+    def get(self, request, *args, **kwargs):
+        """Mark any unread notifications for this object as read."""
+        user = request.user
+        if user.is_authenticated():
+            foia = self.get_object()
+            notifications = Notification.objects.for_user(user).for_object(foia).get_unread()
+            for notification in notifications:
+                notification.mark_read()
+        return super(Detail, self).get(request, *args, **kwargs)
 
     def post(self, request):
         """Handle form submissions"""
@@ -423,7 +433,7 @@ class Detail(DetailView):
                 text=text,
                 foia=foia)
             messages.success(request, 'Problem succesfully reported')
-            actstream.action.send(request.user, verb='flagged', action_object=foia)
+            new_action(request.user, 'flagged', target=foia)
         return redirect(foia)
 
     def _follow_up(self, request, foia):
@@ -433,12 +443,7 @@ class Detail(DetailView):
         success_msg = 'Your follow up has been sent.'
         comm_sent = self._new_comm(request, foia, test, success_msg)
         if comm_sent:
-            actstream.action.send(
-                request.user,
-                verb='followed up on',
-                action_object=foia,
-                target=foia.agency
-            )
+            new_action(request.user, 'followed up on', target=foia)
         return redirect(foia)
 
     def _thank(self, request, foia):
@@ -447,11 +452,7 @@ class Detail(DetailView):
         success_msg = 'Your thank you has been sent.'
         comm_sent = self._new_comm(request, foia, test, success_msg, thanks=True)
         if comm_sent:
-            actstream.action.send(
-                request.user,
-                verb='thanked',
-                action_object=foia.agency
-            )
+            new_action(request.user, verb='thanked', target=foia.agency)
         return redirect(foia)
 
     def _appeal(self, request, foia):
@@ -460,12 +461,7 @@ class Detail(DetailView):
         success_msg = 'Appeal successfully sent.'
         comm_sent = self._new_comm(request, foia, test, success_msg, appeal=True)
         if comm_sent:
-            actstream.action.send(
-                request.user,
-                verb='appealed',
-                action_object=foia,
-                target=foia.agency
-            )
+            new_action(request.user, 'appealed', target=foia)
         return redirect(foia)
 
     def _new_comm(self, request, foia, test, success_msg, appeal=False, thanks=False):

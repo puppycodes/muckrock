@@ -26,6 +26,7 @@ from muckrock.foia.forms import \
 from muckrock.foia.models import FOIARequest, FOIAFile, END_STATUS
 from muckrock.foia.views.comms import save_foia_comm
 from muckrock.jurisdiction.models import Jurisdiction
+from muckrock.utils import new_action, notify
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +142,7 @@ def embargo(request, jurisdiction, jidx, slug, idx):
             followers = actstream.models.followers(foia)
             for follower in followers:
                 actstream.actions.unfollow(follower, foia)
-            actstream.action.send(request.user, verb='embargoed', action_object=foia)
+            new_action(request.user, 'embargoed', target=foia)
             fine_tune_embargo(request, foia)
         else:
             logger.error('%s was forbidden from embargoing %s', request.user, foia)
@@ -162,7 +163,7 @@ def embargo(request, jurisdiction, jidx, slug, idx):
         foia.embargo = False
         foia.save(comment='removed embargo')
         logger.info('%s unembargoed %s', request.user, foia)
-        actstream.action.send(request.user, verb='unembargoed', action_object=foia)
+        new_action(request.user, 'unembargoed', target=foia)
         return
 
     foia = _get_foia(jurisdiction, jidx, slug, idx)
@@ -307,12 +308,14 @@ def crowdfund_request(request, idx, **kwargs):
             foia.crowdfund = crowdfund
             foia.save(comment='added a crowdfund')
             messages.success(request, 'Your crowdfund has started, spread the word!')
-            actstream.action.send(
+            action = new_action(
                 request.user,
-                verb='started',
+                'began crowdfunding',
                 action_object=crowdfund,
-                target=foia
-            )
+                target=foia)
+            # notify followers of the request and followers of the user
+            notify(actstream.models.followers(request.user), action)
+            notify(actstream.models.followers(foia), action)
             return redirect(foia)
 
     elif request.method == 'GET':

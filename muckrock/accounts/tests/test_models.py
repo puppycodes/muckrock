@@ -3,16 +3,15 @@ Tests accounts models
 """
 
 from django.conf import settings
-from django.contrib.auth.models import User
 from django.test import TestCase
 
 from datetime import datetime, date, timedelta
 from mock import Mock, patch
 from nose.tools import ok_, eq_, assert_true, assert_false, raises, nottest
 
-from muckrock.accounts.models import miniregister
-from muckrock.factories import UserFactory, ProfileFactory, OrganizationFactory
-from muckrock.utils import get_stripe_token
+from muckrock.accounts.models import Notification
+from muckrock import factories
+from muckrock.utils import new_action, get_stripe_token
 
 # Creates Mock items for testing methods that involve Stripe
 #
@@ -47,7 +46,7 @@ MockCustomer.retrieve.return_value = mock_customer
 class TestProfileUnit(TestCase):
     """Unit tests for profile model"""
     def setUp(self):
-        self.profile = ProfileFactory(monthly_requests=25, acct_type='pro')
+        self.profile = factories.ProfileFactory(monthly_requests=25, acct_type='pro')
 
     def test_unicode(self):
         """Test profile model's __unicode__ method"""
@@ -56,14 +55,14 @@ class TestProfileUnit(TestCase):
 
     def test_is_advanced(self):
         """Test whether the users are marked as advanced."""
-        beta = ProfileFactory(acct_type='beta')
-        proxy = ProfileFactory(acct_type='beta')
-        admin = ProfileFactory(acct_type='admin')
-        basic = ProfileFactory(acct_type='basic')
-        active_org = OrganizationFactory(active=True)
-        inactive_org = OrganizationFactory(active=False)
-        active_org_member = ProfileFactory(acct_type='basic', organization=active_org)
-        inactive_org_member = ProfileFactory(acct_type='basic', organization=inactive_org)
+        beta = factories.ProfileFactory(acct_type='beta')
+        proxy = factories.ProfileFactory(acct_type='beta')
+        admin = factories.ProfileFactory(acct_type='admin')
+        basic = factories.ProfileFactory(acct_type='basic')
+        active_org = factories.OrganizationFactory(active=True)
+        inactive_org = factories.OrganizationFactory(active=False)
+        active_org_member = factories.ProfileFactory(acct_type='basic', organization=active_org)
+        inactive_org_member = factories.ProfileFactory(acct_type='basic', organization=inactive_org)
         assert_true(self.profile.is_advanced())
         assert_true(beta.is_advanced())
         assert_true(proxy.is_advanced())
@@ -98,14 +97,14 @@ class TestProfileUnit(TestCase):
         """Make request call decrements number of requests if out of monthly requests"""
         # pylint:disable=no-self-use
         num_requests = 10
-        profile = ProfileFactory(num_requests=num_requests)
+        profile = factories.ProfileFactory(num_requests=num_requests)
         profile.make_request()
         eq_(profile.num_requests, num_requests - 1)
 
     def test_make_request_fail(self):
         """If out of requests, make request returns false"""
         # pylint:disable=no-self-use
-        profile = ProfileFactory(num_requests=0)
+        profile = factories.ProfileFactory(num_requests=0)
         profile.date_update = datetime.now()
         assert_false(profile.make_request())
 
@@ -167,70 +166,12 @@ class TestProfileUnit(TestCase):
     def test_cancel_legacy_subscription(self):
         """Test ending a pro subscription when missing a subscription ID"""
         # pylint:disable=no-self-use
-        pro_profile = ProfileFactory(acct_type='basic',
+        pro_profile = factories.ProfileFactory(acct_type='basic',
                                      monthly_requests=settings.MONTHLY_REQUESTS.get('pro'))
         ok_(not pro_profile.subscription_id)
         pro_profile.cancel_pro_subscription()
         eq_(pro_profile.acct_type, 'basic')
         eq_(pro_profile.monthly_requests, settings.MONTHLY_REQUESTS.get('basic'))
-
-
-class TestMiniregister(TestCase):
-    """Miniregistration allows a user to sign up for an account with their full name and email."""
-    def setUp(self):
-        self.full_name = 'Lou Reed'
-        self.email = 'lou@hero.in'
-        self.password = 'password'
-
-    @patch('muckrock.message.tasks.welcome_miniregister.delay')
-    def test_expected_case(self, mock_welcome):
-        """
-        Giving the miniregister method a full name, email, and password should
-        create a user, create a profile, send them a welcome email, and log them in.
-        The method should return the authenticated user.
-        """
-        user = miniregister(self.full_name, self.email, self.password)
-        ok_(isinstance(user, User), 'A user should be created and returned.')
-        ok_(user.profile, 'A profile should be created for the user.')
-        ok_(user.is_authenticated(), 'The user should be logged in.')
-        mock_welcome.assert_called_once() # The user should get a welcome email
-        eq_(user.first_name, 'Lou', 'The first name should be extracted from the full name.')
-        eq_(user.last_name, 'Reed', 'The last name should be extracted from the full name.')
-        eq_(user.username, 'LouReed', 'The username should remove the spaces from the full name.')
-
-    def test_existing_username(self):
-        """
-        If the expected username is already registered,
-        the username should get a cool number appended to it.
-        If multiple sequential usernames exist, the number will
-        be incremented until a username is available.
-        """
-        UserFactory(username='LouReed')
-        user = miniregister(self.full_name, self.email, self.password)
-        eq_(user.username, 'LouReed1')
-        miniregister(self.full_name, self.email, self.password) # LouReed2
-        miniregister(self.full_name, self.email, self.password) # LouReed3
-        miniregister(self.full_name, self.email, self.password) # LouReed4
-        miniregister(self.full_name, self.email, self.password) # LouReed5
-        user = miniregister(self.full_name, self.email, self.password)
-        eq_(user.username, 'LouReed6')
-
-    def test_multi_space_name(self):
-        """
-        If the full name has more than two separate names in it,
-        the first name should include everything except the final name.
-        """
-        long_name = 'John Cougar Mellencamp'
-        user = miniregister(long_name, self.email, self.password)
-        eq_(user.first_name, 'John Cougar')
-        eq_(user.last_name, 'Mellencamp')
-
-    def test_single_name(self):
-        """If a single name is provided as the full name, then there should be no last name."""
-        short_name = 'Prince' # RIP Prince
-        user = miniregister(short_name, self.email, self.password)
-        eq_(user.first_name, 'Prince')
-        ok_(not user.last_name)
 
 
 class TestStripeIntegration(TestCase):
@@ -242,7 +183,7 @@ class TestStripeIntegration(TestCase):
     After testing your changes locally, enable the decorator again.
     """
     def setUp(self):
-        self.profile = ProfileFactory()
+        self.profile = factories.ProfileFactory()
 
     @nottest
     def test_pay(self):
@@ -270,3 +211,65 @@ class TestStripeIntegration(TestCase):
         customer.save()
         self.profile.start_pro_subscription()
         self.profile.cancel_pro_subscription()
+
+
+class TestNotifications(TestCase):
+    """Notifications connect actions to users and contain a read state."""
+    def setUp(self):
+        self.user = factories.UserFactory()
+        self.action = new_action(self.user, 'acted')
+        self.notification = factories.NotificationFactory()
+
+    def test_create_notification(self):
+        """Create a notification with a user and an action."""
+        notification = Notification.objects.create(user=self.user, action=self.action)
+        ok_(notification, 'Notification object should create without error.')
+        ok_(isinstance(notification, Notification), 'Object should be a Notification.')
+        ok_(notification.read is not True, 'Notification sould be unread by default.')
+
+    def test_mark_read(self):
+        """Notifications should be markable as read if unread and unread if read."""
+        self.notification.mark_read()
+        ok_(self.notification.read is True, 'Notification should be marked as read.')
+        self.notification.mark_unread()
+        ok_(self.notification.read is not True, 'Notification should be marked as unread.')
+
+    def test_for_user(self):
+        """Notifications should be filterable by a single user."""
+        user_notification = factories.NotificationFactory(user=self.user)
+        user_notifications = Notification.objects.for_user(self.user)
+        ok_(user_notification in user_notifications,
+            'A notification for the user should be in the set returned.')
+        ok_(self.notification not in user_notifications,
+            'A notification for another user should not be in the set returned.')
+
+    def test_for_model(self):
+        """Notifications should be filterable by a model type."""
+        foia = factories.FOIARequestFactory()
+        _action = new_action(factories.UserFactory(), 'submitted', target=foia)
+        object_notification = factories.NotificationFactory(user=self.user, action=_action)
+        model_notifications = Notification.objects.for_model(foia)
+        ok_(object_notification in model_notifications,
+            'A notification for the model should be in the set returned.')
+        ok_(self.notification not in model_notifications,
+            'A notification not including the model should not be in the set returned.')
+
+    def test_for_object(self):
+        """Notifications should be filterable by a single object."""
+        foia = factories.FOIARequestFactory()
+        _action = new_action(factories.UserFactory(), 'submitted', target=foia)
+        object_notification = factories.NotificationFactory(user=self.user, action=_action)
+        object_notifications = Notification.objects.for_object(foia)
+        ok_(object_notification in object_notifications,
+            'A notification for the object should be in the set returned.')
+        ok_(self.notification not in object_notifications,
+            'A notification not including the object should not be in the set returned.')
+
+    def test_get_unread(self):
+        """Notifications should be filterable by their unread status."""
+        self.notification.mark_unread()
+        ok_(self.notification in Notification.objects.get_unread(),
+            'Unread notifications should be in the set returned.')
+        self.notification.mark_read()
+        ok_(self.notification not in Notification.objects.get_unread(),
+            'Read notifications should not be in the set returned.')

@@ -7,22 +7,30 @@ from django.core.urlresolvers import reverse
 from django.db import models
 from django.db.models import Max, Prefetch, Q
 
-import actstream
+from actstream.models import followers
 from datetime import datetime
 import email
 import logging
 
 from muckrock.agency.models import Agency, STALE_DURATION
-from muckrock.foia.models import FOIACommunication, FOIAFile, FOIANote, FOIARequest, STATUS
+from muckrock.foia.models import (
+    FOIACommunication,
+    FOIAFile,
+    FOIANote,
+    FOIARequest,
+    STATUS,
+    END_STATUS
+)
 from muckrock.jurisdiction.models import Jurisdiction
 from muckrock.message.email import TemplateEmail
 from muckrock.message.tasks import support
 from muckrock.models import ExtractDay, Now
+from muckrock.utils import new_action, notify
 
 # pylint: disable=missing-docstring
 
 def generate_status_action(foia):
-    """Generate activity stream action for agency response"""
+    """Generate activity stream action for agency response and return it."""
     if not foia.agency:
         return
     verbs = {
@@ -35,7 +43,7 @@ def generate_status_action(foia):
         'payment': 'requires payment',
     }
     verb = verbs.get(foia.status, 'is processing')
-    actstream.action.send(foia.agency, verb=verb, action_object=foia)
+    return new_action(foia.agency, verb, target=foia)
 
 class TaskQuerySet(models.QuerySet):
     """Object manager for all tasks"""
@@ -309,16 +317,17 @@ class StaleAgencyTask(Task):
         """Returns a list of stale requests associated with the task's agency"""
         if hasattr(self.agency, 'stale_requests_'):
             return self.agency.stale_requests_
-        requests = (FOIARequest.objects
-                .get_open()
-                .filter(agency=self.agency)
-                .select_related('jurisdiction')
-                .filter(communications__response=True)
-                .annotate(latest_response=ExtractDay(
-                    Now() - Max('communications__date')))
-                .filter(latest_response__gte=STALE_DURATION)
-                .order_by('-latest_response')
-                )
+        # a request is stale when it is open, its most recent
+        # communication is older than the STALE_DURATION, and
+        # if it has autofollowups enabled
+        requests = (FOIARequest.objects.filter(agency=self.agency)
+            .get_open()
+            .filter(disable_autofollowups=False)
+            .annotate(latest_communication=ExtractDay(Now() - Max('communications__date')))
+            .filter(latest_communication__gte=STALE_DURATION)
+            .order_by('-latest_communication')
+            .select_related('jurisdiction')
+        )
         return requests
 
     def latest_response(self):
@@ -498,7 +507,14 @@ class ResponseTask(Task):
             foia.update()
             foia.save(comment='response task status')
             logging.info('Request #%d status changed to "%s"', foia.id, status)
-            generate_status_action(foia)
+            action = generate_status_action(foia)
+            # notify the owner for all statuses
+            # only notify followers if the foia is publicly viewable: this is important!!!!!!!
+            # notify the followers only if the action reflects a terminal status:
+            # completed, rejected, no documents
+            notify(foia.user, action)
+            if foia.is_public() and foia.status in END_STATUS:
+                notify(followers(foia), action)
 
     def set_price(self, price):
         """Sets the price of the communication's request"""

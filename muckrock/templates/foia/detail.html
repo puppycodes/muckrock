@@ -14,7 +14,6 @@
 <meta property="og:title" content="{{ foia.title }}" />
 <meta property="og:type" content="website" />
 <meta property="og:url" content="{{ request.build_absolute_uri }}" />
-<meta property="og:image" content="{% static 'icons/logo.png' %}" />
 <meta property="og:description" content="{{ foia.user.get_full_name }} {% if foia.date_done %}made{% else %}is making{% endif %} this request{% if foia.agency %} to {{ foia.agency.name }} of {% if foia.jurisdiction.name = 'United States of America' %}the {% endif %}{{ foia.jurisdiction.name }}.{% endif %}" />
 <meta property="og:site_name" content="MuckRock" />
 {% endblock open_graph %}
@@ -27,7 +26,6 @@
 {% endif %}
 <meta name="twitter:title" content="{{ foia.title }}" />
 <meta name="twitter:description" content="{{ foia.user.get_full_name }} {% if foia.date_done %}made{% else %}is making{% endif %} this request{% if foia.agency %} to {{ foia.agency.name }} of {% if foia.jurisdiction.name = 'United States of America' %}the {% endif %}{{ foia.jurisdiction.name }}.{% endif %}" />
-<meta name="twitter:image:src" content="{% static 'icons/logo.png' %}" />
 {% endblock twitter_card %}
 
 {% block content %}
@@ -44,7 +42,6 @@
             <p>It is a clone of <a href="{{ foia.parent.get_absolute_url }}">this request</a>.</p>
             {% endif %}
         </section>
-        <span class="toggle-details" id="toggle-specific-information" data-state="0">Show details</span>
         <section class="specific-information">
             {% if request.user.is_staff or foia.tracking_id %}
             <table class="numbers">
@@ -88,16 +85,14 @@
                 {% if show_estimated_date %}
                 <tr class="estimated-completion">
                     <td class="label">Est. Completion</td>
-                    <td class="date">{% if foia.date_estimate %}{{ foia.date_estimate|date }}{% else %}None{% endif %}{% if user_can_edit %}<span class="action">Edit</span>{% endif %}</td>
+                    <td class="date">{% if foia.date_estimate %}{{ foia.date_estimate|date }}{% else %}None{% endif %}{% if user_can_edit %}<span class="edit action">Edit</span>{% endif %}</td>
                 </tr>
                 {% endif %}
             </table>
             {% if user_can_edit %}
             <form class="change-date" id="change-estimated-completion-date" method="post">
                 {% csrf_token %}
-                <label for="{{ change_estimated_date.date_estimate.id_for_label }}">{{ change_estimated_date.date_estimate.label }}</label>
-                {{ change_estimated_date.date_estimate }}
-                <p class="help-text">{{ change_estimated_date.date_estimate.help_text }}</p>
+                {% include 'lib/pattern/form.html' with form=change_estimated_date %}
                 <button class="primary button" type="submit" name="action" value="date_estimate">Save</button>
                 <button class="cancel button" id="cancel-date-estimate">Cancel</button>
             </form>
@@ -327,7 +322,7 @@ Sincerely,
                         <form class="crowdfund composer-input" id="crowdfund" method="post" action="{% url 'foia-crowdfund' jurisdiction=foia.jurisdiction.slug jidx=foia.jurisdiction.pk idx=foia.id slug=foia.slug %}">
                             <header>Crowdfund your request fees</header>
                             {% csrf_token %}
-                            {% include 'lib/pattern/form.html' %}
+                            {% include 'lib/pattern/form.html' with form=crowdfund_form %}
                             <div class="buttons">
                                 <button type="submit" class="primary button">Create Crowdfund</button>
                                 <a href="#inactive" class="button">Cancel</a>
@@ -335,6 +330,15 @@ Sincerely,
                         </form>
                         {% endif %}
                         {% endif %}
+                        <form class="question composer-input" id="get-advice" method="post" action="{% url 'question-create' %}">
+                            <header>Ask a question about your request</header>
+                            {% csrf_token %}
+                            {% include 'lib/pattern/form.html' with form=question_form %}
+                            <div class="buttons">
+                                <button type="submit" class="primary button">Ask Question</button>
+                                <a href="#inactive" class="button">Cancel</a>
+                            </div>
+                        </form>
                     </div>
                 </div>
                 {% endif %}
@@ -518,6 +522,7 @@ Sincerely,
     });
     $('#id_date_due').datepicker({
         dateFormat: 'yy-mm-dd',
+        maxDate: '+30d',
         minDate: 0,
         firstDay: 1,
         hideIfNoPrevNext: true,
