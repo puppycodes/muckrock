@@ -4,7 +4,6 @@ Miscellanous utilities
 
 import actstream
 import datetime
-import mock
 import random
 import string
 import stripe
@@ -42,6 +41,22 @@ def new_action(actor, verb, action_object=None, target=None, public=True, descri
     # action_signal = ((action_handler, Action))
     return action_signal[0][1]
 
+def generate_status_action(foia):
+    """Generate activity stream action for agency response and return it."""
+    if not foia.agency:
+        return
+    verbs = {
+        'rejected': 'rejected',
+        'done': 'completed',
+        'partial': 'partially completed',
+        'processed': 'acknowledged',
+        'no_docs': 'has no responsive documents',
+        'fix': 'requires fix',
+        'payment': 'requires payment',
+    }
+    verb = verbs.get(foia.status, 'is processing')
+    return new_action(foia.agency, verb, target=foia)
+
 def notify(users, action):
     """Notify a set of users about an action and return the list of notifications."""
     from muckrock.accounts.models import Notification
@@ -63,12 +78,6 @@ def notify(users, action):
 def generate_key(size=6, chars=string.ascii_uppercase + string.digits):
     """Generates a random alphanumeric key"""
     return ''.join(random.SystemRandom().choice(chars) for _ in range(size))
-
-def mock_middleware(request):
-    """Mocks the request with messages and session middleware"""
-    setattr(request, 'session', mock.MagicMock())
-    setattr(request, '_messages', mock.MagicMock())
-    return request
 
 def get_stripe_token(card_number='4242424242424242'):
     """

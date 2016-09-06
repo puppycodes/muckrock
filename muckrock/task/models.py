@@ -7,43 +7,25 @@ from django.core.urlresolvers import reverse
 from django.db import models
 from django.db.models import Max, Prefetch, Q
 
-from actstream.models import followers
 from datetime import datetime
 import email
 import logging
 
-from muckrock.agency.models import Agency, STALE_DURATION
+from muckrock.accounts.models import Notification
 from muckrock.foia.models import (
     FOIACommunication,
     FOIAFile,
     FOIANote,
     FOIARequest,
     STATUS,
-    END_STATUS
 )
 from muckrock.jurisdiction.models import Jurisdiction
 from muckrock.message.email import TemplateEmail
 from muckrock.message.tasks import support
 from muckrock.models import ExtractDay, Now
-from muckrock.utils import new_action, notify
+from muckrock.utils import generate_status_action
 
 # pylint: disable=missing-docstring
-
-def generate_status_action(foia):
-    """Generate activity stream action for agency response and return it."""
-    if not foia.agency:
-        return
-    verbs = {
-        'rejected': 'rejected',
-        'done': 'completed',
-        'partial': 'partially completed',
-        'processed': 'acknowledged',
-        'no_docs': 'has no responsive documents',
-        'fix': 'requires fix',
-        'payment': 'requires payment',
-    }
-    verb = verbs.get(foia.status, 'is processing')
-    return new_action(foia.agency, verb, target=foia)
 
 class TaskQuerySet(models.QuerySet):
     """Object manager for all tasks"""
@@ -110,6 +92,7 @@ class NewAgencyTaskQuerySet(models.QuerySet):
     """Object manager for new agency tasks"""
     def preload_list(self):
         """Preload relations for list display"""
+        from muckrock.agency.models import Agency
         return (self.select_related('agency__jurisdiction')
                 .prefetch_related(
                     Prefetch('agency__foiarequest_set',
@@ -283,6 +266,7 @@ class RejectedEmailTask(Task):
 
     def agencies(self):
         """Get the agencies who use this email address"""
+        from muckrock.agency.models import Agency
         return Agency.objects.filter(Q(email__iexact=self.email) |
                                      Q(other_emails__icontains=self.email))
 
@@ -299,7 +283,7 @@ class RejectedEmailTask(Task):
 class StaleAgencyTask(Task):
     """An agency has gone stale"""
     type = 'StaleAgencyTask'
-    agency = models.ForeignKey(Agency)
+    agency = models.ForeignKey('agency.Agency')
 
     def __unicode__(self):
         return u'Stale Agency Task'
@@ -308,23 +292,20 @@ class StaleAgencyTask(Task):
         return reverse('stale-agency-task', kwargs={'pk': self.pk})
 
     def resolve(self, user=None):
-        """Mark the agency as stale when resolving"""
-        self.agency.stale = False
-        self.agency.save()
+        """Unmark the agency as stale when resolving"""
+        self.agency.unmark_stale()
         super(StaleAgencyTask, self).resolve(user)
 
     def stale_requests(self):
         """Returns a list of stale requests associated with the task's agency"""
         if hasattr(self.agency, 'stale_requests_'):
             return self.agency.stale_requests_
-        # a request is stale when it is open, its most recent
-        # communication is older than the STALE_DURATION, and
-        # if it has autofollowups enabled
+        # a request is stale when it is open
+        # and it has autofollowups enabled
         requests = (FOIARequest.objects.filter(agency=self.agency)
             .get_open()
             .filter(disable_autofollowups=False)
             .annotate(latest_communication=ExtractDay(Now() - Max('communications__date')))
-            .filter(latest_communication__gte=STALE_DURATION)
             .order_by('-latest_communication')
             .select_related('jurisdiction')
         )
@@ -354,7 +335,7 @@ class FlaggedTask(Task):
     text = models.TextField()
     user = models.ForeignKey(User, blank=True, null=True)
     foia = models.ForeignKey('foia.FOIARequest', blank=True, null=True)
-    agency = models.ForeignKey(Agency, blank=True, null=True)
+    agency = models.ForeignKey('agency.Agency', blank=True, null=True)
     jurisdiction = models.ForeignKey(Jurisdiction, blank=True, null=True)
 
     def __unicode__(self):
@@ -421,7 +402,7 @@ class NewAgencyTask(Task):
     """A new agency has been created and needs approval"""
     type = 'NewAgencyTask'
     user = models.ForeignKey(User, blank=True, null=True)
-    agency = models.ForeignKey(Agency)
+    agency = models.ForeignKey('agency.Agency')
     objects = NewAgencyTaskQuerySet.as_manager()
 
     def __unicode__(self):
@@ -508,13 +489,13 @@ class ResponseTask(Task):
             foia.save(comment='response task status')
             logging.info('Request #%d status changed to "%s"', foia.id, status)
             action = generate_status_action(foia)
-            # notify the owner for all statuses
-            # only notify followers if the foia is publicly viewable: this is important!!!!!!!
-            # notify the followers only if the action reflects a terminal status:
-            # completed, rejected, no documents
-            notify(foia.user, action)
-            if foia.is_public() and foia.status in END_STATUS:
-                notify(followers(foia), action)
+            foia.notify(action)
+            # Mark generic '<Agency> sent a communication to <FOIARequest> as read.'
+            # https://github.com/MuckRock/muckrock/issues/1003
+            generic_notifications = (Notification.objects.for_object(foia)
+                                    .get_unread().filter(action__verb='sent a communication'))
+            for generic_notification in generic_notifications:
+                generic_notification.mark_read()
 
     def set_price(self, price):
         """Sets the price of the communication's request"""
@@ -538,11 +519,13 @@ class ResponseTask(Task):
         """Special handling for a proxy reject"""
         self.communication.status = 'rejected'
         self.communication.save()
-        self.communication.foia.status = 'rejected'
-        self.communication.foia.proxy_reject()
-        self.communication.foia.update()
-        self.communication.foia.save(comment='response task proxy reject')
-        generate_status_action(self.communication.foia)
+        foia = self.communication.foia
+        foia.status = 'rejected'
+        foia.proxy_reject()
+        foia.update()
+        foia.save(comment='response task proxy reject')
+        action = generate_status_action(foia)
+        foia.notify(action)
 
 
 class FailedFaxTask(Task):
@@ -594,6 +577,20 @@ class MultiRequestTask(Task):
 
     def get_absolute_url(self):
         return reverse('multirequest-task', kwargs={'pk': self.pk})
+
+
+class NewExemptionTask(Task):
+    """Created when a new exemption is submitted for our review."""
+    type = 'NewExemptionTask'
+    foia = models.ForeignKey('foia.FOIARequest')
+    language = models.TextField()
+    user = models.ForeignKey(User)
+
+    def __unicode__(self):
+        return u'New Exemption Task'
+
+    def get_absolute_url(self):
+        return reverse('newexemption-task', kwargs={'pk': self.pk})
 
 
 # Not a task, but used by tasks

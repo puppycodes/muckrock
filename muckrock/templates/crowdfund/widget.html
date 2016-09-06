@@ -5,7 +5,7 @@
 
 <section class="crowdfund__widget" id="crowdfund-{{ crowdfund.pk }}">
     <header class="crowdfund__widget__header">
-        <h1>{{ crowdfund.name }}</h1>
+        <h1><a href="{{crowdfund.get_crowdfund_object.get_absolute_url}}">{{ crowdfund.name }}</a></h1>
         <div>
             <span class="action" id="show-share">Share</span>
             <span class="action" id="show-embed">Embed</span>
@@ -70,7 +70,7 @@
                 </div>
                 {% endif %}
             </section>
-            <section class="donate">
+            <section class="crowdfund__donate">
                 <input type="number" class="currency-field" name="stripe_amount" value="2500" />
                 <button type="submit" class="basic green button">Donate</button>
             </section>

@@ -63,14 +63,20 @@ def detail(request, jurisdiction, jidx, slug, idx):
         .order_by('-date_submitted')[:10])
 
     if request.method == 'POST':
+        action = request.POST.get('action')
         form = FlagForm(request.POST)
-        if form.is_valid():
-            FlaggedTask.objects.create(
-                user=request.user,
-                text=form.cleaned_data.get('reason'),
-                agency=agency)
-            messages.info(request, 'Correction submitted. Thanks!')
-            return redirect(agency)
+        if action == 'flag':
+            if form.is_valid():
+                FlaggedTask.objects.create(
+                    user=request.user,
+                    text=form.cleaned_data.get('reason'),
+                    agency=agency)
+                messages.success(request, 'Correction submitted. Thanks!')
+                return redirect(agency)
+        elif action == 'mark_stale' and request.user.is_staff:
+            task = agency.mark_stale(manual=True)
+            messages.success(request, 'Agency marked as stale.')
+            return redirect(reverse('stale-agency-task', kwargs={'pk': task.pk}))
     else:
         form = FlagForm()
 
@@ -126,7 +132,10 @@ class AgencyViewSet(viewsets.ModelViewSet):
     """API views for Agency"""
     # pylint: disable=too-many-ancestors
     # pylint: disable=too-many-public-methods
-    queryset = Agency.objects.all().select_related('jurisdiction', 'parent', 'appeal_agency')
+    queryset = (Agency.objects
+            .select_related('jurisdiction', 'parent', 'appeal_agency')
+            .prefetch_related('types')
+            )
     serializer_class = AgencySerializer
 
     class Filter(django_filters.FilterSet):

@@ -26,7 +26,7 @@ from muckrock.foia.forms import \
 from muckrock.foia.models import FOIARequest, FOIAFile, END_STATUS
 from muckrock.foia.views.comms import save_foia_comm
 from muckrock.jurisdiction.models import Jurisdiction
-from muckrock.utils import new_action, notify
+from muckrock.utils import new_action
 
 logger = logging.getLogger(__name__)
 
@@ -137,11 +137,6 @@ def embargo(request, jurisdiction, jidx, slug, idx):
             foia.embargo = True
             foia.save(comment='added embargo')
             logger.info('%s embargoed %s', request.user, foia)
-            # unsubscribe all followers of the request
-            # https://github.com/MuckRock/muckrock/issues/720
-            followers = actstream.models.followers(foia)
-            for follower in followers:
-                actstream.actions.unfollow(follower, foia)
             new_action(request.user, 'embargoed', target=foia)
             fine_tune_embargo(request, foia)
         else:
@@ -308,14 +303,11 @@ def crowdfund_request(request, idx, **kwargs):
             foia.crowdfund = crowdfund
             foia.save(comment='added a crowdfund')
             messages.success(request, 'Your crowdfund has started, spread the word!')
-            action = new_action(
+            new_action(
                 request.user,
                 'began crowdfunding',
                 action_object=crowdfund,
                 target=foia)
-            # notify followers of the request and followers of the user
-            notify(actstream.models.followers(request.user), action)
-            notify(actstream.models.followers(foia), action)
             return redirect(foia)
 
     elif request.method == 'GET':

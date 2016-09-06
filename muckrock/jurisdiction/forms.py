@@ -2,6 +2,7 @@
 
 from django import forms
 
+from muckrock.foia.models import FOIARequest
 from muckrock.forms import MRFilterForm
 from muckrock.jurisdiction.models import Jurisdiction
 
@@ -25,14 +26,20 @@ class JurisdictionFilterForm(MRFilterForm):
             'StateAutocomplete',
             attrs={'placeholder': 'All States'}))
 
+
+class ExemptionSubmissionForm(forms.Form):
+    """Allows exemptions to be submitted."""
+    foia = forms.ModelChoiceField(queryset=FOIARequest.objects.all())
+    language = forms.CharField(widget=forms.Textarea())
+
+
 class FlagForm(forms.Form):
     """Form to flag an agency or jurisdiction"""
     reason = forms.CharField(
         widget=forms.Textarea(),
         label='Submit a Change',
         help_text=(
-            'Please describe the change, such as providing missing information '
-            'or correcting existing information, in sufficient detail below:'
+            'Please describe the change in sufficient detail.'
         )
     )
 

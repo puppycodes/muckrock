@@ -25,26 +25,8 @@ from muckrock.factories import (
 from muckrock.foia.views import Detail as FOIARequestDetail
 from muckrock.organization.models import Organization
 from muckrock.qanda.views import Detail as QuestionDetail
-from muckrock.utils import mock_middleware, new_action, notify
-
-
-def http_get_response(url, view, user=AnonymousUser(), **kwargs):
-    """Handles making GET requests, returns the response."""
-    request_factory = RequestFactory()
-    request = request_factory.get(url, **kwargs)
-    request = mock_middleware(request)
-    request.user = user
-    response = view(request, **kwargs)
-    return response
-
-def http_post_response(url, view, data, user=AnonymousUser(), **kwargs):
-    """Handles making POST requests, returns the response."""
-    request_factory = RequestFactory()
-    request = request_factory.post(url, data, **kwargs)
-    request = mock_middleware(request)
-    request.user = user
-    response = view(request)
-    return response
+from muckrock.utils import new_action, notify
+from muckrock.test_utils import mock_middleware, http_get_response, http_post_response
 
 def http_get_post(url, view, data):
     """Performs both a GET and a POST on the same url and view."""
@@ -252,12 +234,15 @@ class TestBuyRequestsView(TestCase):
     def setUp(self):
         self.user = UserFactory()
         self.factory = RequestFactory()
-        self.url = reverse('acct-buy-requests', kwargs={'username': self.user.username})
+        self.kwargs = {'username': self.user.username}
+        self.url = reverse('acct-buy-requests', kwargs=self.kwargs)
         self.view = views.buy_requests
         self.data = {
             'stripe_token': 'test',
             'stripe_email': self.user.email
         }
+
+
 
     def test_buy_requests(self):
         """A user should be able to buy themselves requests."""
@@ -322,6 +307,17 @@ class TestBuyRequestsView(TestCase):
         other_user.profile.refresh_from_db()
         requests_to_add = 4
         eq_(other_user.profile.num_requests, existing_request_count + requests_to_add)
+
+    def test_buy_multiple_bundles(self):
+        """Users should be able to buy multiple bundles of four requests."""
+        profile = self.user.profile
+        bundles_to_buy = 2
+        existing_request_count = profile.num_requests
+        self.data['bundles'] = bundles_to_buy
+        http_post_response(self.url, self.view, self.data, self.user, **self.kwargs)
+        profile.refresh_from_db()
+        requests_to_add = bundles_to_buy * self.user.profile.bundled_requests()
+        eq_(profile.num_requests, existing_request_count + requests_to_add)
 
     @raises(Http404)
     def test_nonexistant_user(self):

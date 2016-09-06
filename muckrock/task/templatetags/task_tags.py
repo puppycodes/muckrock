@@ -48,6 +48,12 @@ class CrowdfundTaskNode(TaskNode):
     endpoint_name = 'crowdfund-task-list'
     class_name = 'crowdfund'
 
+    def get_extra_context(self):
+        """Adds the crowdfund object to context."""
+        extra_context = super(CrowdfundTaskNode, self).get_extra_context()
+        extra_context['crowdfund_object'] = self.task.crowdfund.get_crowdfund_object()
+        return extra_context
+
 
 class FailedFaxTaskNode(TaskNode):
     """Renders a failed fax task."""
@@ -210,6 +216,14 @@ class StatusChangeTaskNode(TaskNode):
     class_name = 'status-change'
 
 
+class NewExemptionTaskNode(TaskNode):
+    """Renders a new exemption task."""
+    model = task.models.NewExemptionTask
+    task_template = 'task/new_exemption.html'
+    endpoint_name = 'newexemption-task-list'
+    class_name = 'new-exemption'
+
+
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
 def get_id(token):
@@ -288,3 +302,9 @@ def multi_request_task(parser, token):
 def failed_fax_task(parser, token):
     """Returns a FailedFaxTaskNode"""
     return FailedFaxTaskNode(get_id(token))
+
+@register.tag
+def new_exemption_task(parser, token):
+    """Returns a NewExemptionTaskNode"""
+    return NewExemptionTaskNode(get_id(token))
+

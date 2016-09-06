@@ -7,7 +7,7 @@ footer.website-footer {
 
     .logo {
         display: inline-block;
-        margin-bottom: $vertical-rhythm;
+        margin-bottom: $vr;
         svg {
             fill: $color-white;
             height: 2rem;
@@ -28,8 +28,15 @@ footer.website-footer {
         }
     }
 
+    .button {
+        color: $color-white;
+        &:hover {
+            color: $color-white;
+        }
+    }
+
     dfn {
-        margin-bottom: $vertical-rhythm/2;
+        margin-bottom: $vr/2;
         color: $color-white;
     }
 
@@ -39,13 +46,13 @@ footer.website-footer {
     }
 
     li {
-        font-size: $font-size-3;
-        line-height: $font-line-height;
-        margin-bottom: $vertical-rhythm/2;
+        font-size: $size-3;
+        line-height: $lh;
+        margin-bottom: $vr/2;
     }
 
     .footer {
-        padding: $vertical-rhythm 0;
+        padding: $vr 0;
     }
 
     .footer, .links {
@@ -55,7 +62,7 @@ footer.website-footer {
     }
 
     .brand, .link-group {
-        padding: 0 $vertical-rhythm;
+        padding: 0 $vr;
     }
 
     .brand {

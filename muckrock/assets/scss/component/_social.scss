@@ -10,11 +10,12 @@
 .social {
     .channels {
         @include display(flex);
+        @include flex-wrap(wrap);
         @include align-items(center);
     }
     .channel {
         overflow: hidden;
-        @include flex(1);
+        @include flex(1 1 3em);
         text-align: center;
         transition: all .1s ease-out;
         &:hover {
@@ -30,15 +31,16 @@
     }
     .label {
         display: none;
-        font-size: $font-size-1;
-        font-weight: $font-weight-bold;
+        font-size: $size-1;
+        font-weight: $bold;
     }
     a {
         display: block;
-        padding: $vertical-rhythm/2;
+        padding: $vr/2;
         background: $color-black;
         color: $color-white;
         text-decoration: none;
+        cursor: default;
     }
     @include social-color(email, $color-email);
     @include social-color(twitter, $color-twitter);
