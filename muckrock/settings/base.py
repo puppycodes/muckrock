@@ -129,6 +129,7 @@ TEMPLATE_CONTEXT_PROCESSORS = (
 )
 
 MIDDLEWARE_CLASSES = (
+    'corsheaders.middleware.CorsMiddleware',
     'django_hosts.middleware.HostsRequestMiddleware',
     'djangosecure.middleware.SecurityMiddleware',
     'dogslow.WatchdogMiddleware',
@@ -173,6 +174,7 @@ INSTALLED_APPS = (
     'django.contrib.staticfiles',
     'celery_haystack',
     'compressor',
+    'corsheaders',
     'debug_toolbar',
     'django_premailer',
     'djangosecure',
@@ -533,3 +535,9 @@ LEAFLET_CONFIG = {
 }
 
 FOIAMACHINE_URL = 'dev.foiamachine.org:8000'
+
+# Limit CORS support to just API endpoints
+CORS_URLS_REGEX = r'^/api(_v\d)?/.*$'
+# Limit CORS origin to just FOIA machine
+CORS_ORIGIN_REGEX_WHITELIST = (r'^(https?://)?(\w+\.)?foiamachine\.org(:\d+)?$', )
+CORS_ALLOW_CREDENTIALS = True

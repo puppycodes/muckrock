@@ -1,3 +1,30 @@
+/* Colors */
+
+$pure-black: #000000;
+$black: #362522;
+$dark-grey: #84625d;
+$light-grey: #d5b3ae;
+$white: #f8f7f6;
+$pure-white: #FFFFFF;
+
+$blue: blue;
+$red: red;
+
+$primary: #fb5238;
+
+/* Typography */
+
+$lh: 1.6;
+$serif: "Georgia", serif;
+$system: -apple-system, BlinkMacSystemFont,
+        'avenir next', avenir,
+        helvetica, 'helvetica neue',
+        ubuntu,
+        roboto, noto,
+        'segoe ui', arial,
+        sans-serif;
+
+
 * {
     box-sizing: border-box;
 }
@@ -23,17 +50,11 @@ html {
 body {
     margin: 0;
     padding: 0;
-    font-family: -apple-system, BlinkMacSystemFont,
-        'avenir next', avenir,
-        helvetica, 'helvetica neue',
-        ubuntu,
-        roboto, noto,
-        'segoe ui', arial,
-        sans-serif;
+    font-family: $system;
     text-rendering: optimizeLegibility;
-    line-height: 1.6;
-    background: #f8f8f8;
-    color: #202020;
+    line-height: $lh;
+    background: $white;
+    color: $black;
 }
 main {
     max-width: 50rem;
@@ -41,13 +62,14 @@ main {
     padding: 0 1em;
 }
 a {
+    color: $primary;
     opacity: .8;
 }
 a:hover {
     opacity: .6;
 }
 a:visited {
-    color: blue;
+    color: $primary;
 }
 table {
     width: 100%;
@@ -62,8 +84,8 @@ td {
     padding: .25em;
 }
 table.ruled td {
-    border-top: 1px solid #ccc;
-    border-bottom: 1px solid #ccc;
+    border-top: 1px solid $light-grey;
+    border-bottom: 1px solid $light-grey;
 }
 td.top {
     vertical-align: top;
@@ -78,10 +100,10 @@ td p {
     font-size: .8rem;
 }
 .red {
-    color: red;
+    color: $red;
 }
 .grey {
-    color: #666;
+    color: $dark-grey;
 }
 .select-all {
     -webkit-user-select: all;
@@ -113,6 +135,9 @@ td p {
 }
 .inline li:last-child {
     margin-right: 0;
+}
+.text-center {
+    text-align: center;
 }
 
 /* Grid and layout */
@@ -160,38 +185,38 @@ td p {
 
 .button {
     font-size: 1rem;
-    line-height: 1.6;
+    line-height: $lh;
     font-weight: bold;
     padding: .25em .75em;
     border: none;
     border-radius: 9999px;
-    background: blue;
-    color: white;
+    background: $primary;
+    color: $pure-white;
     opacity: .8;
     cursor: pointer;
     text-decoration: none;
 }
 .button:hover {
-    color: white;
+    color: $pure-white;
     opacity: .6;
 }
 .button:active {
-    color: white;
+    color: $pure-white;
 }
 .button:visited {
-    color: white;
+    color: $pure-white;
 }
 .button:disabled {
     opacity: .4;
     cursor: pointer;
 }
 .blue.button {
-    background: blue;
+    background: $blue;
 }
 .red.button {
-    background: red;
+    background: $red;
 }
-.small.button {
+.small.button, .small .button {
     font-size: .8rem;
 }
 
@@ -203,13 +228,13 @@ td p {
     font-weight: bold;
     font-size: .6em;
     background: #666;
-    color: #fff;
+    color: $pure-white;
 }
 .red.badge {
-    background: red;
+    background: $red;
 }
 .blue.badge {
-    background: blue;
+    background: $blue;
 }
 
 /* Forms and fields */
@@ -222,7 +247,7 @@ input, textarea, select {
     font-size: .8rem;
 }
 input, textarea {
-    border: 1px solid #ccc;
+    border: 1px solid $light-grey;
     padding: .25em;
 }
 textarea {
@@ -253,7 +278,7 @@ input[type="file"] {
     font-weight: bold;
 }
 .field .required {
-    color: #666;
+    color: $dark-grey;
     font-size: .8rem;
 }
 .field .help-text {
@@ -268,7 +293,7 @@ input[type="file"] {
     margin: 0;
     padding: 0;
     list-style: none;
-    color: red;
+    color: $red;
     font-size: .8rem;
 }
 
@@ -296,9 +321,13 @@ input[type="file"] {
     width: 1.25em;
     height: 1.25em;
     shape-rendering: geometricPrecision;
+    fill-rule: evenodd;
 }
 .icon path, .icon rect, .icon circle {
-    fill: #202020;
+    fill: $black;
+}
+.error.icon path {
+    fill: $red;
 }
 
 /* Global nav */
@@ -308,12 +337,12 @@ input[type="file"] {
     margin: 0 auto;
 }
 .topnav {
-    border-bottom: 1px solid #ccc;
-    background: #fff;
+    border-bottom: 1px solid $light-grey;
+    background: $pure-white;
 }
 .bottomnav {
     margin-top: 2rem;
-    border-top: 1px solid #ccc;
+    border-top: 1px solid $light-grey;
 }
 
 /* Toolbar */
@@ -337,8 +366,8 @@ input[type="file"] {
 
 /* Filter form */
 .filter.form {
-    background: #fff;
-    border: 1px solid #ccc;
+    background: $pure-white;
+    border: 1px solid $light-grey;
 }
 .filter.form .visible-fields {
     display: flex;
@@ -356,22 +385,71 @@ input[type="file"] {
     align-items: center;
     justify-content: center;
     min-height: 100%;
-    color: #666;
+    color: $dark-grey;
+}
+
+/* Homepage */
+
+.homepage-header {
+    margin-bottom: 1rem;
+    padding: 2rem;
+    background: $primary;
+    // color: $white;
+    text-align: center;
+    .mascot.icon {
+        height: 4em;
+        width: 4em;
+        path {
+            // fill: $pure-white;
+        }
+    }
+    .button {
+        background: $black;
+        color: $primary;
+        opacity: 1;
+        &:hover {
+            background: $white;
+        }
+    }
+    .badge {
+        background: transparent;
+        color: $black;
+        border: 3px solid;
+    }
+        h1 {
+        margin-top: 0;
+        font-size: 2em;
+        text-align: center;
+    }
+}
+
+.homepage {
+    h2, p {
+        margin-top: 0;
+    }
+    .row:not(:first-child) {
+        margin-bottom: 1rem;
+        padding-top: 1rem;
+        border-top: 3px solid $light-grey;
+    }
+    h2 {
+        padding-right: 1rem;
+    }
 }
 
 /* Communication object */
 
 .communication {
     margin-bottom: 1em;
-    border: 1px solid #ccc;
-    background: #ffffff;
+    border: 1px solid $light-grey;
+    background: $pure-white;
 }
 .communication table {
     width: auto;
 }
 .communication header {
     padding: .5rem 1rem;
-    border-bottom: 1px solid #ccc;
+    border-bottom: 1px solid $light-grey;
 }
 .communication header .badge {
     display: block;
@@ -383,7 +461,7 @@ input[type="file"] {
 .communication__message {
     overflow: hidden;
     padding: 0 1em;
-    font-family: "Georgia", serif;
+    font-family: $serif;
 }
 .communication.sent {
     color: #000350;
@@ -395,7 +473,7 @@ input[type="file"] {
 
 .file {
     padding: .5rem 1rem;
-    border-top: 1px solid #ccc;
+    border-top: 1px solid $light-grey;
 }
 .sent .file {
     border-top-color: #ccccff;
@@ -421,10 +499,119 @@ input[type="file"] {
     display: block;
     width: 100%;
     padding: .25em;
-    border: 1px solid #ccc;
-    background: #fff;
+    border: 1px solid $light-grey;
+    background: $pure-white;
 }
 .autocomplete-light-widget .remove {
     vertical-align: middle;
     margin-right: .25em;
+}
+
+/* Exemption Browser */
+
+.exemptionBrowser label {
+    display: block;
+    margin-bottom: .25em;
+}
+
+.exemption-search {
+    @extend .align-center;
+    margin-bottom: 1rem;
+    input {
+        flex: 1 1 auto;
+        padding-left: 1rem;
+        line-height: $lh;
+        border-top-left-radius: 9999px;
+        border-bottom-left-radius: 9999px;
+    }
+    button {
+        flex: 1 1 25%;
+        border: 1px solid $primary;
+        border-top-left-radius: 0;
+        border-bottom-left-radius: 0;
+    }
+}
+
+.exemption__results {
+    margin-bottom: 1rem;
+    padding: 1rem;
+    border: 1px solid $dark-grey;
+    background: $light-grey;
+}
+
+.exemption__empty {
+    text-align: center;
+    .exemption__empty__submit {
+        display: none;
+    }
+}
+
+.exemption__detail {
+    margin: 1rem 0;
+    padding: 0 .5em;
+    border: 1px solid $light-grey;
+    background: $pure-white;
+}
+
+.exemption__list__item {
+    margin-bottom: 1rem;
+    padding: 0 .5em;
+    border: 1px solid $dark-grey;
+    background: $white;
+    cursor: pointer;
+    &:hover {
+        background: $primary;
+        color: $pure-white;
+        .link {
+            color: $pure-white;
+        }
+    }
+    .link {
+        color: $primary;
+        text-decoration: underline;
+    }
+}
+
+.exemption__detail__appeal {
+    blockquote {
+        font-style: italic;
+        white-space: pre-line;
+        user-select: all;
+    }
+    .quarter {
+        margin: 1rem;
+    }
+    .quarter p {
+        float: right;
+    }
+}
+
+.exemption__form {
+    margin-bottom: 1rem;
+    padding: 0 1rem;
+    border: 1px solid $light-grey;
+    background: $pure-white;
+    position: relative;
+    footer {
+        margin-bottom: 1rem;
+        display: flex;
+        justify-content: space-between;
+    }
+    .overlay {
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 1;
+        background: rgba($white, .9);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+        .icon {
+            height: 2rem;
+            width: 2rem;
+        }
+    }
 }
